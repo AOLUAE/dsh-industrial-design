@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Industrial design master">
+  <rect width="64" height="64" rx="14" fill="#4f6ef7"/>
+  <rect x="13" y="18" width="38" height="28" rx="4" fill="none" stroke="#ffffff" stroke-width="3"/>
+  <line x1="13" y1="32" x2="51" y2="32" stroke="#ffffff" stroke-width="2"/>
+  <line x1="24" y1="18" x2="24" y2="12" stroke="#ffffff" stroke-width="2"/>
+  <line x1="40" y1="18" x2="40" y2="12" stroke="#ffffff" stroke-width="2"/>
+  <line x1="56" y1="22" x2="61" y2="22" stroke="#ffffff" stroke-width="2"/>
+  <line x1="56" y1="28" x2="61" y2="28" stroke="#ffffff" stroke-width="2"/>
+  <circle cx="32" cy="50" r="3.5" fill="#ffffff"/>
+  <line x1="32" y1="53.5" x2="32" y2="59" stroke="#ffffff" stroke-width="2"/>
+</svg>

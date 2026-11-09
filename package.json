@@ -1,0 +1,28 @@
+{
+  "name": "dsh-industrial-design",
+  "version": "0.1.0",
+  "description": "Industrial design master: a seven-stage S0-S7 state machine with variable locking matrix, consistency checklist, category locking and generation records.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "skills/industrial-design-master/SKILL.md"
+  ],
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" }
+  },
+  "peerDependencies": {
+    "dsh-image-gen": ">=0.10.0"
+  },
+  "peerDependenciesMeta": {
+    "dsh-image-gen": { "optional": true }
+  }
+}

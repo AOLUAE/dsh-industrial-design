@@ -1,0 +1,4 @@
+- insert:
+    - id: industrial-design
+      name: 'dsh-industrial-design'
+      config: {}
