@@ -1,4 +1,9 @@
 - insert:
     - id: industrial-design
       name: 'dsh-industrial-design'
-      config: {}
+      config:
+        firstCategoryN: 30
+        consistencyThreshold: 0.9
+        skeletonMatchThreshold: 0.85
+        maxConvergenceRounds: 3
+        categoryList: []

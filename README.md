@@ -36,17 +36,19 @@ pnpm dsh plugin --profile <profile> add dsh-image-gen
 - **交互确认**：技能会在关键决策点调用 `ask_user_question` 弹出交互选择框（带推荐选项 + 允许自由输入），用于 S0 冻结 Brief / S3 选方向 / S4 选方案 / S5 确认 DNA / S7 签收。
 - **双端可用**：本插件为 Host bundle，桌面端与网页版（Web GUI）均可使用；工具与状态存储在宿主运行时，与客户端形态无关。
 
-## 配置（v0.3.0）
+## 配置（v0.3.2）
 
-在「设置 → 插件」里配置以下参数（填写即覆盖默认值；`industrial_get_state` 返回的 `config` 字段为当前生效值）：
+在「设置 → 插件 → industrial-design」里配置以下参数（填写即覆盖默认值；`industrial_get_state` 返回的 `config` 字段为当前生效值）：
 
-| 参数 | 默认 | 说明 |
-| --- | --- | --- |
-| `firstCategoryN` | 30 | 首批单品类固定样本量 N |
-| `consistencyThreshold` | 0.9 | 机器判定器「机器 vs 人评」对齐的一致率门槛 |
-| `skeletonMatchThreshold` | 0.85 | S5.5 骨架投影与锚定线稿吻合度门槛 |
-| `maxConvergenceRounds` | 3 | 同一阶段触顶失败的重推轮次上限 |
-| `categoryList` | [] | 允许的品类白名单；非空时 `industrial_project_init` 拒绝列表外品类 |
+| 参数 | 默认 | 说明 | 示例 |
+| --- | --- | --- | --- |
+| `firstCategoryN` | 30 | 首批品类（`first_project.category_id`）收敛所需样本量 N：攒满 N 个同类项目后才按品类分层统计放行 | 30；首批品类是「手持设备 handheld」时就等攒满 30 个 handheld 项目 |
+| `consistencyThreshold` | 0.9 | S7 一致性阈值（0~1）：正交视图组与设计 DNA 的同源一致率须 ≥ 此值才放行 | 0.9 = ≥90%；放宽到 0.8 即 ≥80% |
+| `skeletonMatchThreshold` | 0.85 | S5.5 几何骨架吻合度阈值（0~1）：骨架投影与锚定线稿关键特征线吻合度须 ≥ 此值 | 0.85 = ≥85%；越接近 1 越严格 |
+| `maxConvergenceRounds` | 3 | 同一方向触顶失败后的收敛轮次上限 | 3 = 连续 3 轮不达标即回退 S2 或更换方向 |
+| `categoryList` | [] | 允许的品类白名单（品类 id 数组）。空数组 = 不限制；非空时 `industrial_project_init` 的 `category_id` 必须在列 | `["handheld","wearable","desktop"]` 只允许这三个品类 |
+
+> 说明：参数带「中文描述 + 示例」会随配置表单一起显示；README 这里同步维护一份便于离线查阅。
 
 ## 安装
 

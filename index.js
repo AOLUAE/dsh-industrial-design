@@ -47,11 +47,11 @@ const z = await (async () => {
 
 export const Config = z
   ? z.object({
-      firstCategoryN: volatile(z.number().min(1).default(30)),
-      consistencyThreshold: volatile(z.number().min(0).max(1).default(0.9)),
-      skeletonMatchThreshold: volatile(z.number().min(0).max(1).default(0.85)),
-      maxConvergenceRounds: volatile(z.number().min(1).default(3)),
-      categoryList: volatile(z.array(z.string()).default([]))
+      firstCategoryN: volatile(z.number().min(1).default(30).description('首批品类（first_project.category_id）收敛所需样本数 N：攒满 N 个同类项目后才按品类分层统计放行。示例：30 表示首个品类需 30 个真实项目。')),
+      consistencyThreshold: volatile(z.number().min(0).max(1).default(0.9).description('S7 一致性校验阈值（0~1）：正交视图组与设计 DNA 的同源一致率须 ≥ 此值才放行。示例：0.9 表示 ≥90%。')),
+      skeletonMatchThreshold: volatile(z.number().min(0).max(1).default(0.85).description('S5.5 轻量几何骨架吻合度阈值（0~1）：骨架投影与锚定线稿关键特征线吻合度须 ≥ 此值。示例：0.85 表示 ≥85%。')),
+      maxConvergenceRounds: volatile(z.number().min(1).default(3).description('同一方向触顶失败后的收敛轮次上限。示例：3 表示连续 3 轮不达标即须回退 S2 或更换方向。')),
+      categoryList: volatile(z.array(z.string()).default([]).description('允许的品类白名单（品类 id 数组）。空数组 = 不限制；非空时 industrial_project_init 声明的 category_id 必须在列。示例：["handheld","wearable","desktop"]。'))
     })
   : undefined
 
@@ -377,6 +377,16 @@ export function apply(ctx, config = {}) {
     maxConvergenceRounds: unwrap(config.maxConvergenceRounds) ?? 3,
     categoryList: unwrap(config.categoryList) ?? []
   })
+
+  // 显式声明「自动生成设置表单」策略，确保 Settings > Plugins 出可编辑表单。
+  const settings = ctx.get('settings')
+  if (settings && typeof settings.configure === 'function') {
+    try {
+      ctx.effect(() => settings.configure({ auto: true }))
+    } catch {
+      /* 已注册策略时忽略 */
+    }
+  }
 
   ctx.effect(() => {
     const skills = ctx.get('skills')
