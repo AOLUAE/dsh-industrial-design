@@ -1,6 +1,6 @@
 # dsh-industrial-design
 
-工业设计大师 · S0–S7 状态机插件（v0.2.0）
+工业设计大师 · S0–S7 状态机插件（v0.3.0）
 
 把一次工业设计需求从 Brief 冻结（S0）逐步推进到正交视图组交付（S7）的 **状态编排器**。它内置了「工业设计大师」认知层技能，并提供 6 个工具用于项目状态、变量锁定、生成复现与一致性校验的落地。
 
@@ -8,16 +8,17 @@
 
 ## ⚠️ 前置依赖（必读）
 
-S7 的「视图与渲染交付」依赖**生图工具** `generate_image` / `edit_image`，由 **`dsh-image-gen`** 插件提供。本插件**不内置**生图能力——因为生图需要你自己的凭据（API Key / 订阅 / ComfyUI），不是「装上插件就能出图」。
+S7 的「视图与渲染交付」依赖**生图工具** `generate_image` / `edit_image`。本插件**不内置**生图能力——因为生图需要你自己的凭据（API Key / 订阅 / ComfyUI），不是「装上插件就能出图」。
 
 - **S0–S6**：无需生图插件，状态机可独立运行。
-- **S7**：必须先安装 `dsh-image-gen` 并配置好凭据，否则模型会明确提示你「缺少生图工具」。
+- **S7**：必须先安装并配置**任一具备生图能力的插件**（如 `dsh-image-gen`，或暴露 `generate_image` / `generate_images` / `edit_image` 工具的其他插件），否则模型会明确提示你「缺少生图工具」。
 
 ```bash
+# 示例：安装 dsh-image-gen（也可用任意具备生图能力的插件）
 pnpm dsh plugin --profile <profile> add dsh-image-gen
 ```
 
-安装后在「设置 → 插件 → 图像生成」配置 provider（如 openai-compat 中转站）与 API Key。
+安装后在「设置 → 插件」配置 provider（如 openai-compat 中转站）与 API Key。
 
 ## 功能
 
@@ -32,8 +33,10 @@ pnpm dsh plugin --profile <profile> add dsh-image-gen
   | `industrial_record_consistency` | 记录 10.2 逐项判定（机器/人工/混合） |
   | `industrial_get_state` | 读取当前项目状态 |
 - **状态持久化**：项目状态存于 `$DSH_HOME/industrial-design/projects.json`（MVP 为单文件、非跨进程安全，后续版本迁到 sessionProjections/configEditor）。
+- **交互确认**：技能会在关键决策点调用 `ask_user_question` 弹出交互选择框（带推荐选项 + 允许自由输入），用于 S0 冻结 Brief / S3 选方向 / S4 选方案 / S5 确认 DNA / S7 签收。
+- **双端可用**：本插件为 Host bundle，桌面端与网页版（Web GUI）均可使用；工具与状态存储在宿主运行时，与客户端形态无关。
 
-## 配置（v0.2.0）
+## 配置（v0.3.0）
 
 在「设置 → 插件」里配置以下参数（填写即覆盖默认值；`industrial_get_state` 返回的 `config` 字段为当前生效值）：
 

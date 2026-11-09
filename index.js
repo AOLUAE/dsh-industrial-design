@@ -314,7 +314,7 @@ function makeGetState(ctx, getCfg) {
   return {
     name: 'industrial_get_state',
     description:
-      '读取项目当前状态：stage / category_id / 锁定变量 / design_dna_id / generation_record 列表 / 一致性结果列表；并检测生图工具 generate_image 是否可用（S7 视图渲染依赖）。',
+      '读取项目当前状态：stage / category_id / 锁定变量 / design_dna_id / generation_record 列表 / 一致性结果列表；并检测生图工具（generate_image / generate_images / edit_image）是否可用（S7 视图渲染依赖）。',
     parameters: {
       type: 'object',
       properties: {
@@ -326,13 +326,18 @@ function makeGetState(ctx, getCfg) {
     async execute(args) {
       const store = loadStore()
       const p = mustProject(store, args.project_id)
-      const hasImageGen = Boolean(ctx.tools && typeof ctx.tools.get === 'function' && ctx.tools.get('generate_image'))
+      const IMAGE_TOOLS = ['generate_image', 'generate_images', 'edit_image']
+      const imageTools = ctx.tools && typeof ctx.tools.get === 'function'
+        ? IMAGE_TOOLS.filter((n) => ctx.tools.get(n))
+        : []
+      const hasImageGen = imageTools.length > 0
       return {
         ...p,
         image_gen_available: hasImageGen,
+        image_tools: imageTools,
         image_gen_note: hasImageGen
-          ? 'generate_image 工具可用（dsh-image-gen 已激活）。'
-          : '未检测到 generate_image：S7 视图渲染需要 dsh-image-gen 插件（含已配置凭据），请先安装并配置。',
+          ? `已检测到生图工具：${imageTools.join('、')}（由 dsh-image-gen 或任意具备生图能力的插件提供）。`
+          : '未检测到生图工具（generate_image / generate_images / edit_image）：S7 视图渲染需先安装并配置任一具备生图能力的插件。',
         config: getCfg()
       }
     }
