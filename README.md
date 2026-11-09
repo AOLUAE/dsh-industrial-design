@@ -1,6 +1,6 @@
 # dsh-industrial-design
 
-工业设计大师 · S0–S7 状态机插件（MVP v0.1.0）
+工业设计大师 · S0–S7 状态机插件（v0.2.0）
 
 把一次工业设计需求从 Brief 冻结（S0）逐步推进到正交视图组交付（S7）的 **状态编排器**。它内置了「工业设计大师」认知层技能，并提供 6 个工具用于项目状态、变量锁定、生成复现与一致性校验的落地。
 
@@ -31,7 +31,19 @@ pnpm dsh plugin --profile <profile> add dsh-image-gen
   | `industrial_record_generation` | 写 generation_record（可复现） |
   | `industrial_record_consistency` | 记录 10.2 逐项判定（机器/人工/混合） |
   | `industrial_get_state` | 读取当前项目状态 |
-- **状态持久化**：项目状态存于 `$DSH_HOME/industrial-design/projects.json`（MVP 为单文件、非跨进程安全，v0.2.0 迁到 sessionProjections/configEditor）。
+- **状态持久化**：项目状态存于 `$DSH_HOME/industrial-design/projects.json`（MVP 为单文件、非跨进程安全，后续版本迁到 sessionProjections/configEditor）。
+
+## 配置（v0.2.0）
+
+在「设置 → 插件」里配置以下参数（填写即覆盖默认值；`industrial_get_state` 返回的 `config` 字段为当前生效值）：
+
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `firstCategoryN` | 30 | 首批单品类固定样本量 N |
+| `consistencyThreshold` | 0.9 | 机器判定器「机器 vs 人评」对齐的一致率门槛 |
+| `skeletonMatchThreshold` | 0.85 | S5.5 骨架投影与锚定线稿吻合度门槛 |
+| `maxConvergenceRounds` | 3 | 同一阶段触顶失败的重推轮次上限 |
+| `categoryList` | [] | 允许的品类白名单；非空时 `industrial_project_init` 拒绝列表外品类 |
 
 ## 安装
 
@@ -76,7 +88,7 @@ dsh-industrial-design/
 ## MVP 边界（v0.1.0 明确不做）
 
 - 机器判定器打分、golden set 回归、RBAC 多用户签收、知识库 L1–L6、DFM 工程校验（L5 仅保留最小四规则提示）。
-- UI 面板、Config 表单（`export const Config` schema 延后到 v0.2.0）。
+- UI 面板（自定义面板；Config 参数表单已由 v0.2.0 的 Config schema + volatile 字段自动提供）。
 - 外观专利检索：仅启发式提示，不构成法律意见。
 
 ## License

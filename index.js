@@ -12,6 +12,31 @@ import { homedir } from 'node:os'
 export const inject = ['tools']
 
 // ---------------------------------------------------------------------------
+// Config schema (schemastery) — 可配置项
+// ---------------------------------------------------------------------------
+// schemastery 由 host 提供。经 npm/git 安装为真实目录时可解析 → 出设置表单；经
+// plugin_manager 对本地目录用 link:（符号链接）安装时，Node 默认把 bundle 解析到
+// 真实路径、找不到 host 的 schemastery，此时降级为 undefined（无表单，但 apply
+// 仍以 ?? 默认值读 raw config，配置项照常生效）。
+// 0.1.7+ 支持 `.volatile()`：字段在 Settings > Plugins 出表单、原地更新（读取需经 `.get()`）。
+function volatile(schema) {
+  const mark = schema.volatile
+  return typeof mark === 'function' ? mark.call(schema) : schema
+}
+
+const z = await import('@deepseek-ai/schemastery').then((m) => m.default).catch(() => null)
+
+export const Config = z
+  ? z.object({
+      firstCategoryN: volatile(z.number().min(1).default(30)),
+      consistencyThreshold: volatile(z.number().min(0).max(1).default(0.9)),
+      skeletonMatchThreshold: volatile(z.number().min(0).max(1).default(0.85)),
+      maxConvergenceRounds: volatile(z.number().min(1).default(3)),
+      categoryList: volatile(z.array(z.string()).default([]))
+    })
+  : undefined
+
+// ---------------------------------------------------------------------------
 // Bundled skill — single source of truth is skills/industrial-design-master/SKILL.md
 // ---------------------------------------------------------------------------
 const SKILL_PATH = new URL('./skills/industrial-design-master/SKILL.md', import.meta.url)
@@ -103,27 +128,34 @@ const OUTPUT = {
 // Tool definitions
 // ---------------------------------------------------------------------------
 
-const projectInit = {
-  name: 'industrial_project_init',
-  description:
-    'S0：创建/初始化一个工业设计项目，声明品类（category_id，随 Brief 冻结锁定）并记录 Brief 草稿。返回项目当前状态。',
-  parameters: {
-    type: 'object',
-    properties: {
-      project_id: { type: 'string', description: '项目唯一 ID' },
-      name: { type: 'string', description: '项目名称（可选，缺省用 project_id）' },
-      category_id: { type: 'string', description: '品类声明（如 handheld / desktop / wearable / appliance …），S0 声明后随 Brief 冻结' },
-      brief: { type: 'object', description: 'Brief 草稿（核心功能/目标用户/售价区间/材料工艺偏好等，任意键值）' }
+function makeProjectInit(getCfg) {
+  return {
+    name: 'industrial_project_init',
+    description:
+      'S0：创建/初始化一个工业设计项目，声明品类（category_id，随 Brief 冻结锁定）并记录 Brief 草稿。返回项目当前状态。',
+    parameters: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string', description: '项目唯一 ID' },
+        name: { type: 'string', description: '项目名称（可选，缺省用 project_id）' },
+        category_id: { type: 'string', description: '品类声明（如 handheld / desktop / wearable / appliance …），S0 声明后随 Brief 冻结' },
+        brief: { type: 'object', description: 'Brief 草稿（核心功能/目标用户/售价区间/材料工艺偏好等，任意键值）' }
+      },
+      required: ['project_id', 'category_id']
     },
-    required: ['project_id', 'category_id']
-  },
-  output: OUTPUT,
-  async execute(args) {
-    const store = loadStore()
-    if (store[args.project_id]) throw new Error(`项目已存在：${args.project_id}。用 industrial_get_state 查看，勿重复初始化。`)
-    store[args.project_id] = newProject(args)
-    saveStore(store)
-    return store[args.project_id]
+    output: OUTPUT,
+    async execute(args) {
+      const store = loadStore()
+      if (store[args.project_id]) throw new Error(`项目已存在：${args.project_id}。用 industrial_get_state 查看，勿重复初始化。`)
+      const cfg = getCfg()
+      const allowed = Array.isArray(cfg.categoryList) ? cfg.categoryList : []
+      if (allowed.length > 0 && !allowed.includes(args.category_id)) {
+        throw new Error(`品类 ${args.category_id} 不在配置的品类列表内。可用品类：${allowed.join(' / ')}（或在插件配置中清空 categoryList 以允许任意品类）。`)
+      }
+      store[args.project_id] = newProject(args)
+      saveStore(store)
+      return store[args.project_id]
+    }
   }
 }
 
@@ -278,7 +310,7 @@ const recordConsistency = {
   }
 }
 
-function makeGetState(ctx) {
+function makeGetState(ctx, getCfg) {
   return {
     name: 'industrial_get_state',
     description:
@@ -300,7 +332,8 @@ function makeGetState(ctx) {
         image_gen_available: hasImageGen,
         image_gen_note: hasImageGen
           ? 'generate_image 工具可用（dsh-image-gen 已激活）。'
-          : '未检测到 generate_image：S7 视图渲染需要 dsh-image-gen 插件（含已配置凭据），请先安装并配置。'
+          : '未检测到 generate_image：S7 视图渲染需要 dsh-image-gen 插件（含已配置凭据），请先安装并配置。',
+        config: getCfg()
       }
     }
   }
@@ -309,7 +342,18 @@ function makeGetState(ctx) {
 // ---------------------------------------------------------------------------
 // apply
 // ---------------------------------------------------------------------------
-export function apply(ctx, _config) {
+export function apply(ctx, config = {}) {
+  const unwrap = (value) =>
+    value !== null && typeof value === 'object' && typeof value.get === 'function' ? value.get() : value
+
+  const getCfg = () => ({
+    firstCategoryN: unwrap(config.firstCategoryN) ?? 30,
+    consistencyThreshold: unwrap(config.consistencyThreshold) ?? 0.9,
+    skeletonMatchThreshold: unwrap(config.skeletonMatchThreshold) ?? 0.85,
+    maxConvergenceRounds: unwrap(config.maxConvergenceRounds) ?? 3,
+    categoryList: unwrap(config.categoryList) ?? []
+  })
+
   ctx.effect(() => {
     const skills = ctx.get('skills')
     if (!skills) return
@@ -326,12 +370,12 @@ export function apply(ctx, _config) {
 
   ctx.effect(() => {
     const disposers = [
-      ctx.tools.register(projectInit),
+      ctx.tools.register(makeProjectInit(getCfg)),
       ctx.tools.register(advanceStage),
       ctx.tools.register(lockVariables),
       ctx.tools.register(recordGeneration),
       ctx.tools.register(recordConsistency),
-      ctx.tools.register(makeGetState(ctx))
+      ctx.tools.register(makeGetState(ctx, getCfg))
     ]
     return () => disposers.forEach((dispose) => dispose())
   })
