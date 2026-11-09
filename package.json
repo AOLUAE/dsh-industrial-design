@@ -1,6 +1,6 @@
 {
   "name": "dsh-industrial-design",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Industrial design master: a seven-stage S0-S7 state machine with variable locking matrix, consistency checklist, category locking and generation records.",
   "type": "module",
   "license": "Apache-2.0",

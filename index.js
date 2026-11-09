@@ -7,6 +7,7 @@
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { homedir } from 'node:os'
 
 export const inject = ['tools']
@@ -14,17 +15,35 @@ export const inject = ['tools']
 // ---------------------------------------------------------------------------
 // Config schema (schemastery) — 可配置项
 // ---------------------------------------------------------------------------
-// schemastery 由 host 提供。经 npm/git 安装为真实目录时可解析 → 出设置表单；经
-// plugin_manager 对本地目录用 link:（符号链接）安装时，Node 默认把 bundle 解析到
-// 真实路径、找不到 host 的 schemastery，此时降级为 undefined（无表单，但 apply
-// 仍以 ?? 默认值读 raw config，配置项照常生效）。
+// schemastery 由 host 提供（peer 依赖）。正常安装为真实目录时可解析 → 出设置表单；
+// 经 plugin_manager 对本地目录用 link:（符号链接）安装时，Node 默认把 bundle 解析到
+// 真实路径、看不到 host 提升的 node_modules，此时回退到 profile 的 node_modules 显式
+// 定位 schemastery 的 ESM 入口，保证仍能出表单、参数可编辑。
 // 0.1.7+ 支持 `.volatile()`：字段在 Settings > Plugins 出表单、原地更新（读取需经 `.get()`）。
 function volatile(schema) {
   const mark = schema.volatile
   return typeof mark === 'function' ? mark.call(schema) : schema
 }
 
-const z = await import('@deepseek-ai/schemastery').then((m) => m.default).catch(() => null)
+const z = await (async () => {
+  try {
+    return (await import('@deepseek-ai/schemastery')).default
+  } catch {
+    const roots = [
+      process.env.DSH_PROFILE_DIR,
+      process.env.DSH_HOME && process.env.DSH_PROFILE
+        ? join(process.env.DSH_HOME, 'profiles', process.env.DSH_PROFILE)
+        : undefined
+    ].filter(Boolean)
+    for (const root of roots) {
+      const entry = join(root, 'node_modules', '@deepseek-ai', 'schemastery', 'lib', 'index.mjs')
+      try {
+        return (await import(pathToFileURL(entry).href)).default
+      } catch { /* try next root */ }
+    }
+    return null
+  }
+})()
 
 export const Config = z
   ? z.object({
