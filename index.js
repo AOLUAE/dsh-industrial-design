@@ -2,8 +2,12 @@
  * dsh-industrial-design — Host bundle for the "工业设计大师" S0–S7 state machine.
  *
  * Bundles the cognitive-layer skill (skills/industrial-design-master/SKILL.md) and
- * registers six state-machine tools. Project state is persisted to a file-backed
+ * registers state-machine tools. Project state is persisted to a file-backed
  * JSON store (MVP: not cross-process safe; see README).
+ *
+ * v0.4.0: added machine judge (consistency aggregation), real-geometry record,
+ * research synthesis, design-DNA record, CMF record, and geometry-anchored
+ * generation records (ControlNet / IP-Adapter fields).
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -51,7 +55,8 @@ export const Config = z
       consistencyThreshold: volatile(z.number().min(0).max(1).default(0.9).description('S7 一致性校验阈值（0~1）：正交视图组与设计 DNA 的同源一致率须 ≥ 此值才放行。示例：0.9 表示 ≥90%。')),
       skeletonMatchThreshold: volatile(z.number().min(0).max(1).default(0.85).description('S5.5 轻量几何骨架吻合度阈值（0~1）：骨架投影与锚定线稿关键特征线吻合度须 ≥ 此值。示例：0.85 表示 ≥85%。')),
       maxConvergenceRounds: volatile(z.number().min(1).default(3).description('同一方向触顶失败后的收敛轮次上限。示例：3 表示连续 3 轮不达标即须回退 S2 或更换方向。')),
-      categoryList: volatile(z.array(z.string()).default([]).description('允许的品类白名单（品类 id 数组）。空数组 = 不限制；非空时 industrial_project_init 声明的 category_id 必须在列。示例：["handheld","wearable","desktop"]。'))
+      categoryList: volatile(z.array(z.string()).default([]).description('允许的品类白名单（品类 id 数组）。空数组 = 不限制；非空时 industrial_project_init 声明的 category_id 必须在列。示例：["handheld","wearable","desktop"]。')),
+      cadMCP: volatile(z.string().default('').description('S6 真实几何导出的 CAD 工具名/前缀（可选）。填写后 industrial_get_state 会检测匹配的 CAD 工具（如 freecad / cad_mcp）。示例：填 "freecad" 可匹配 freecad_* 系列工具；留空则 S6 降级为「图 + 说明」，不产出可测几何。'))
     })
   : undefined
 
@@ -122,6 +127,11 @@ function newProject(args) {
     lockedAllow: [],
     generations: [],
     consistency: [],
+    research: [],
+    opportunities: [],
+    dna: [],
+    cmf: [],
+    geometry: [],
     changelog: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
@@ -250,13 +260,17 @@ const lockVariables = {
 const recordGeneration = {
   name: 'industrial_record_generation',
   description:
-    '写一条 generation_record（生成可复现性）。每次关键图像生成后必须调用，缺 record 的生成不进指标统计。',
+    '写一条 generation_record（生成可复现性）。每次关键图像生成后必须调用，缺 record 的生成不进指标统计。S5.5/S7 出正交视图须带几何锚（control_mode/reference_image）。',
   parameters: {
     type: 'object',
     properties: {
       project_id: { type: 'string', description: '项目 ID' },
       stage: { type: 'string', description: '生成所在阶段（S4 / S5.5 / S7 …）' },
-      view: { type: 'string', description: '视图（正/侧/背/俯/45°/透视图/场景渲染）' },
+      view: { type: 'string', enum: ['front', 'side', 'back', 'top', '45', 'perspective', 'scene', 'cmf'], description: '视图：front=正 / side=侧 / back=背 / top=俯 / 45=45° / perspective=透视图 / scene=场景渲染 / cmf=CMF 表现' },
+      control_mode: { type: 'string', enum: ['none', 'canny', 'lineart', 'depth'], description: '几何锚定方式。S5.5/S7 出正交视图须用 canny/lineart/depth 锚定骨架投影，禁止 none 裸文生图。' },
+      reference_image: { type: 'string', description: '几何锚参考图（锚定线稿/骨架投影图；路径或已上传附件 id）' },
+      reference_strength: { type: 'number', description: '几何锚强度 0~1（ControlNet 强度，越接近 1 越贴合参考轮廓）' },
+      adapter_strength: { type: 'number', description: '一致性适配强度 0~1（IP-Adapter/MV-Adapter，锁风格与跨视图身份一致）' },
       model_version: { type: 'string', description: '生成模型版本' },
       prompt: { type: 'string', description: '提示词（或其哈希 prompt_hash）' },
       seed: { type: 'string', description: '随机种子（可选）' },
@@ -278,6 +292,10 @@ const recordGeneration = {
       design_dna_id: args.design_dna_id || p.designDnaId || 'N/A',
       stage: args.stage || p.stage,
       view: args.view || '',
+      control_mode: args.control_mode || 'none',
+      reference_image: args.reference_image ?? '',
+      reference_strength: args.reference_strength ?? null,
+      adapter_strength: args.adapter_strength ?? null,
       seed: args.seed ?? '',
       model_version: args.model_version,
       prompt: args.prompt,
@@ -296,7 +314,7 @@ const recordGeneration = {
 const recordConsistency = {
   name: 'industrial_record_consistency',
   description:
-    '记录一条 S7 一致性校验结果（10.2 清单逐项判定：机器/人工/混合）。组级任一项不通过即该视图组不通过。',
+    '记录一条 S7 一致性校验结果（10.2 清单逐项判定：机器/人工/混合）。组级任一项不通过即该视图组不通过。用 industrial_compute_consistency 聚合量化。',
   parameters: {
     type: 'object',
     properties: {
@@ -305,7 +323,8 @@ const recordConsistency = {
       verdict: { type: 'string', enum: ['pass', 'fail'], description: '二值判定' },
       judge_type: { type: 'string', enum: ['machine', 'human', 'mixed'], description: '判定方式：机器/人工/混合' },
       detail: { type: 'string', description: '口径/误差或复核说明' },
-      feature_consistency: { type: 'string', description: '可选：特征级一致率（通过特征项数/抽检总特征项数）' }
+      feature_consistency: { type: 'string', description: '可选：特征级一致率（通过特征项数/抽检总特征项数）' },
+      view_group: { type: 'string', description: '可选：所属视图组（如 front/side/back/top），用于 industrial_compute_consistency 的组级通过率统计' }
     },
     required: ['project_id', 'item', 'verdict', 'judge_type']
   },
@@ -319,6 +338,7 @@ const recordConsistency = {
       judge_type: args.judge_type,
       detail: args.detail || '',
       feature_consistency: args.feature_consistency || '',
+      view_group: args.view_group || '',
       at: Date.now(),
       timestamp: new Date().toISOString()
     }
@@ -329,11 +349,184 @@ const recordConsistency = {
   }
 }
 
-function makeGetState(ctx, getCfg) {
+const synthesizeResearch = {
+  name: 'industrial_synthesize_research',
+  description:
+    'S1：把调研结论结构化归档为洞察清单（编号 I-01…）。每条洞察必须三态标注：fact（事实，带来源）/ inference（推断）/ tbd（待验证）。返回洞察数与 S1 准出门禁提示。',
+  parameters: {
+    type: 'object',
+    properties: {
+      project_id: { type: 'string', description: '项目 ID' },
+      insights: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: '洞察编号，如 I-01' },
+            statement: { type: 'string', description: '洞察陈述' },
+            source: { type: 'string', description: '事实来源（fact 必填；inference/tbd 可空）' },
+            type: { type: 'string', enum: ['fact', 'inference', 'tbd'], description: '三态标注：fact=事实（带来源）/ inference=推断 / tbd=待验证' }
+          },
+          required: ['id', 'statement', 'type']
+        },
+        description: '洞察清单'
+      },
+      opportunities: { type: 'array', items: { type: 'string' }, description: '可选：S2 机会点草稿（2~3 个）' }
+    },
+    required: ['project_id', 'insights']
+  },
+  output: OUTPUT,
+  async execute(args) {
+    const store = loadStore()
+    const p = mustProject(store, args.project_id)
+    const facts = args.insights.filter((i) => i.type === 'fact').length
+    p.research = args.insights
+    if (Array.isArray(args.opportunities)) p.opportunities = args.opportunities
+    p.updatedAt = Date.now()
+    p.changelog.push({ at: Date.now(), kind: 'synthesize_research', facts, total: args.insights.length })
+    saveStore(store)
+    return {
+      project_id: p.projectId,
+      total: args.insights.length,
+      facts,
+      gate_hint: facts >= 5
+        ? 'S1 准出门禁满足（≥5 条事实级洞察）。可推进 S2。'
+        : `S1 准出门禁未满足：当前 ${facts} 条事实级洞察，需 ≥5。继续补齐调研。`,
+      opportunities: p.opportunities || []
+    }
+  }
+}
+
+const recordDna = {
+  name: 'industrial_record_dna',
+  description:
+    'S5：冻结并记录设计 DNA（轮廓比例、主特征线、关键 R 角、分件逻辑、CMF 基调、LOGO 位、人机基准尺寸）+ 锚定线稿。生成 design_dna_id，作为 S6/S7 单一真源。',
+  parameters: {
+    type: 'object',
+    properties: {
+      project_id: { type: 'string', description: '项目 ID' },
+      design_dna_id: { type: 'string', description: '可选：自定义 DNA id；缺省自动生成' },
+      silhouette_ratio: { type: 'string', description: '外轮廓/长宽高比例（如 78×40×12mm，长宽高 6.5:3.3:1）' },
+      feature_lines: { type: 'array', items: { type: 'string' }, description: '主特征线描述列表（如「侧视肩部上扬腰线」）' },
+      key_radii: { type: 'string', description: '关键 R 角（如「顶部圆角 R8，底部 R3」）' },
+      parting_logic: { type: 'string', description: '分件逻辑（分模线/分件线/装配缝位置）' },
+      cmf_base: { type: 'string', description: 'CMF 基调（材质/主色/表面处理）' },
+      logo_position: { type: 'string', description: 'LOGO 位' },
+      ergonomic_dims: { type: 'object', description: '人机基准尺寸（如 握持宽度/按键间距）' },
+      anchor_sketch: { type: 'string', description: '锚定线稿（路径或附件 id/哈希）' },
+      note: { type: 'string', description: '备注' }
+    },
+    required: ['project_id']
+  },
+  output: OUTPUT,
+  async execute(args) {
+    const store = loadStore()
+    const p = mustProject(store, args.project_id)
+    const dnaId = args.design_dna_id || `dna-${Date.now().toString(36)}`
+    const record = {
+      design_dna_id: dnaId,
+      silhouette_ratio: args.silhouette_ratio || '',
+      feature_lines: args.feature_lines || [],
+      key_radii: args.key_radii || '',
+      parting_logic: args.parting_logic || '',
+      cmf_base: args.cmf_base || '',
+      logo_position: args.logo_position || '',
+      ergonomic_dims: args.ergonomic_dims || {},
+      anchor_sketch: args.anchor_sketch || '',
+      note: args.note || '',
+      at: Date.now(),
+      timestamp: new Date().toISOString()
+    }
+    p.dna.push(record)
+    p.designDnaId = dnaId
+    p.updatedAt = Date.now()
+    p.changelog.push({ at: Date.now(), kind: 'record_dna', design_dna_id: dnaId })
+    saveStore(store)
+    return { ...record, gate_hint: 'S5 准出：DNA 已冻结，进入 S5.5/S6/S7 的视图变更必须回流修改本 DNA。' }
+  }
+}
+
+const recordCmf = {
+  name: 'industrial_record_cmf',
+  description:
+    'S6：记录 CMF（色彩/材质/表面处理）规格与备选方案。S6 准出门禁之一（用户确认 CMF）。',
+  parameters: {
+    type: 'object',
+    properties: {
+      project_id: { type: 'string', description: '项目 ID' },
+      spec: { type: 'object', description: 'CMF 规格书（material=材质 / finish=表面处理 / color=色号 / texture=纹理 / logo_process=LOGO 工艺）' },
+      options: { type: 'array', items: { type: 'string' }, description: '备选 CMF 方案列表（供用户交互选择）' },
+      selected: { type: 'string', description: '用户选定的 CMF 方案（与 options 之一对应）' },
+      note: { type: 'string', description: '备注' }
+    },
+    required: ['project_id']
+  },
+  output: OUTPUT,
+  async execute(args) {
+    const store = loadStore()
+    const p = mustProject(store, args.project_id)
+    const record = {
+      spec: args.spec || {},
+      options: args.options || [],
+      selected: args.selected || '',
+      note: args.note || '',
+      at: Date.now(),
+      timestamp: new Date().toISOString()
+    }
+    p.cmf.push(record)
+    p.updatedAt = Date.now()
+    p.changelog.push({ at: Date.now(), kind: 'record_cmf', selected: args.selected || '' })
+    saveStore(store)
+    return { ...record, gate_hint: 'S6 准出之一：CMF 已记录；仍需 DFM 无阻断级问题（用户确认 CMF 时调用 ask_user_question）。' }
+  }
+}
+
+const recordGeometry = {
+  name: 'industrial_record_geometry',
+  description:
+    'S5.5/S6：记录真实可测几何的导出（STEP/IGES/OBJ/3DM），以及骨架吻合度 / 尺寸校核结论。用于把 S5.5 轻量骨架落地为可测几何、支撑 DFM 初检。',
+  parameters: {
+    type: 'object',
+    properties: {
+      project_id: { type: 'string', description: '项目 ID' },
+      format: { type: 'string', enum: ['STEP', 'IGES', 'OBJ', '3DM', 'image'], description: '导出格式；image=降级为图（无 CAD 能力时）' },
+      file_path: { type: 'string', description: '几何文件路径（或图片路径）' },
+      source: { type: 'string', enum: ['skeleton', 'cad_mcp', 'manual'], description: '来源：skeleton=骨架重建 / cad_mcp=CAD MCP 导出 / manual=手工建模' },
+      skeleton_match: { type: 'number', description: '骨架吻合度 0~1（S5.5 门禁：投影与锚定线稿关键特征线吻合度）' },
+      dimensions_checked: { type: 'boolean', description: '是否完成人机尺寸校核' },
+      dfm_notes: { type: 'array', items: { type: 'string' }, description: 'DFM 初检问题列表（拔模角/壁厚/分模面/装配间隙）' },
+      note: { type: 'string', description: '备注' }
+    },
+    required: ['project_id', 'format']
+  },
+  output: OUTPUT,
+  async execute(args) {
+    const store = loadStore()
+    const p = mustProject(store, args.project_id)
+    const record = {
+      format: args.format,
+      file_path: args.file_path || '',
+      source: args.source || 'manual',
+      skeleton_match: args.skeleton_match ?? null,
+      dimensions_checked: args.dimensions_checked ?? false,
+      dfm_notes: args.dfm_notes || [],
+      note: args.note || '',
+      at: Date.now(),
+      timestamp: new Date().toISOString()
+    }
+    p.geometry.push(record)
+    p.updatedAt = Date.now()
+    p.changelog.push({ at: Date.now(), kind: 'record_geometry', format: args.format })
+    saveStore(store)
+    return record
+  }
+}
+
+function makeComputeConsistency(getCfg) {
   return {
-    name: 'industrial_get_state',
+    name: 'industrial_compute_consistency',
     description:
-      '读取项目当前状态：stage / category_id / 锁定变量 / design_dna_id / generation_record 列表 / 一致性结果列表；并检测生图工具（generate_image / generate_images / edit_image）是否可用（S7 视图渲染依赖）。',
+      '机器判定器：聚合 S7 一致性校验结果，量化「特征级一致率」与「组级通过率」，并与配置阈值比对给出达标判定。10.2 的 launch blocker「同源一致率≥阈值」由本工具落地。',
     parameters: {
       type: 'object',
       properties: {
@@ -345,11 +538,97 @@ function makeGetState(ctx, getCfg) {
     async execute(args) {
       const store = loadStore()
       const p = mustProject(store, args.project_id)
+      const items = p.consistency || []
+      const total = items.length
+      const passed = items.filter((r) => r.verdict === 'pass').length
+      const rate = total > 0 ? passed / total : 0
+      const threshold = getCfg().consistencyThreshold
+
+      const breakdown = {}
+      for (const r of items) {
+        breakdown[r.item] = breakdown[r.item] || { pass: 0, fail: 0, judge: r.judge_type }
+        breakdown[r.item][r.verdict === 'pass' ? 'pass' : 'fail'] += 1
+      }
+
+      const groups = {}
+      for (const r of items) {
+        if (!r.view_group) continue
+        groups[r.view_group] = groups[r.view_group] || []
+        groups[r.view_group].push(r)
+      }
+      const groupNames = Object.keys(groups)
+      const passedGroups = groupNames.filter((g) => groups[g].every((r) => r.verdict === 'pass')).length
+      const groupRate = groupNames.length > 0 ? passedGroups / groupNames.length : null
+
+      const verdict = total === 0 ? '无数据' : rate >= threshold ? '达标' : '不达标'
+      return {
+        project_id: p.projectId,
+        stage: p.stage,
+        total_items: total,
+        passed_items: passed,
+        feature_consistency_rate: Number(rate.toFixed(4)),
+        group_pass_rate: groupRate === null ? null : Number(groupRate.toFixed(4)),
+        groups: groupNames.length > 0 ? { total: groupNames.length, passed: passedGroups } : null,
+        threshold,
+        verdict,
+        breakdown,
+        note: total === 0
+          ? '尚无一致性校验记录，请先在 S7 用 industrial_record_consistency 逐项记录（可带 view_group）。'
+          : verdict === '达标'
+            ? `特征级一致率 ${(rate * 100).toFixed(1)}% ≥ 阈值 ${(threshold * 100).toFixed(0)}%，S7 一致性校验通过。`
+            : `特征级一致率 ${(rate * 100).toFixed(1)}% < 阈值 ${(threshold * 100).toFixed(0)}%，需回流修正视图后重测（对照变量锁定矩阵 §3 的 S7 视图重出）。`
+      }
+    }
+  }
+}
+
+function makeGetState(ctx, getCfg) {
+  return {
+    name: 'industrial_get_state',
+    description:
+      '读取项目当前状态：stage / category_id / 锁定变量 / design_dna_id / generation_record / 一致性结果 / 洞察 / DNA / CMF / 几何；并检测生图工具与 CAD 工具是否可用（S7 渲染与 S6 几何依赖）。',
+    parameters: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string', description: '项目 ID' }
+      },
+      required: ['project_id']
+    },
+    output: OUTPUT,
+    async execute(args) {
+      const store = loadStore()
+      const p = mustProject(store, args.project_id)
+
       const IMAGE_TOOLS = ['generate_image', 'generate_images', 'edit_image']
       const imageTools = ctx.tools && typeof ctx.tools.get === 'function'
         ? IMAGE_TOOLS.filter((n) => ctx.tools.get(n))
         : []
       const hasImageGen = imageTools.length > 0
+
+      const cfg = getCfg()
+      const cadPrefix = (cfg.cadMCP || '').trim()
+      const knownCad = ['freecad_mcp', 'cad_mcp', 'freecad', 'cogram']
+      let cadTools = []
+      if (ctx.tools && typeof ctx.tools.get === 'function') {
+        cadTools = knownCad.filter((n) => ctx.tools.get(n))
+        if (cadPrefix && !cadTools.includes(cadPrefix)) {
+          try {
+            const defs = typeof ctx.tools.definitions === 'function' ? ctx.tools.definitions() : null
+            if (defs) {
+              const names = (Array.isArray(defs) ? defs : Object.values(defs))
+                .map((d) => (d && typeof d === 'object' ? d.name : d))
+                .filter((n) => typeof n === 'string')
+              cadTools = cadTools.concat(names.filter((n) => n.startsWith(cadPrefix)))
+            }
+          } catch { /* ignore */ }
+        }
+      }
+      const hasCad = cadTools.length > 0
+
+      const cons = p.consistency || []
+      const consTotal = cons.length
+      const consPassed = cons.filter((r) => r.verdict === 'pass').length
+
       return {
         ...p,
         image_gen_available: hasImageGen,
@@ -357,7 +636,25 @@ function makeGetState(ctx, getCfg) {
         image_gen_note: hasImageGen
           ? `已检测到生图工具：${imageTools.join('、')}（由 dsh-image-gen 或任意具备生图能力的插件提供）。`
           : '未检测到生图工具（generate_image / generate_images / edit_image）：S7 视图渲染需先安装并配置任一具备生图能力的插件。',
-        config: getCfg()
+        cad_available: hasCad,
+        cad_tools: cadTools,
+        cad_note: hasCad
+          ? `已检测到 CAD 工具：${cadTools.join('、')}（S6 可导出真实几何 STEP/IGES/OBJ）。`
+          : cadPrefix
+            ? `未检测到前缀为 "${cadPrefix}" 的 CAD 工具：S6 降级为「图 + 说明」。`
+            : '未配置 cadMCP 且未检测到已知 CAD 工具：S6 降级为「图 + 说明」（不产出可测几何）。',
+        consistency: consTotal > 0
+          ? { total: consTotal, passed: consPassed, feature_rate: Number((consPassed / consTotal).toFixed(4)) }
+          : { total: 0, passed: 0, feature_rate: null },
+        summary: {
+          generations: (p.generations || []).length,
+          consistency_records: consTotal,
+          research_insights: (p.research || []).length,
+          dna_records: (p.dna || []).length,
+          cmf_records: (p.cmf || []).length,
+          geometry_records: (p.geometry || []).length
+        },
+        config: cfg
       }
     }
   }
@@ -375,7 +672,8 @@ export function apply(ctx, config = {}) {
     consistencyThreshold: unwrap(config.consistencyThreshold) ?? 0.9,
     skeletonMatchThreshold: unwrap(config.skeletonMatchThreshold) ?? 0.85,
     maxConvergenceRounds: unwrap(config.maxConvergenceRounds) ?? 3,
-    categoryList: unwrap(config.categoryList) ?? []
+    categoryList: unwrap(config.categoryList) ?? [],
+    cadMCP: unwrap(config.cadMCP) ?? ''
   })
 
   // 显式声明「自动生成设置表单」策略，确保 Settings > Plugins 出可编辑表单。
@@ -409,6 +707,11 @@ export function apply(ctx, config = {}) {
       ctx.tools.register(lockVariables),
       ctx.tools.register(recordGeneration),
       ctx.tools.register(recordConsistency),
+      ctx.tools.register(synthesizeResearch),
+      ctx.tools.register(recordDna),
+      ctx.tools.register(recordCmf),
+      ctx.tools.register(recordGeometry),
+      ctx.tools.register(makeComputeConsistency(getCfg)),
       ctx.tools.register(makeGetState(ctx, getCfg))
     ]
     return () => disposers.forEach((dispose) => dispose())

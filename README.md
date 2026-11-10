@@ -1,8 +1,8 @@
 # dsh-industrial-design
 
-工业设计大师 · S0–S7 状态机插件（v0.3.0）
+工业设计大师 · S0–S7 状态机插件（v0.4.0）
 
-把一次工业设计需求从 Brief 冻结（S0）逐步推进到正交视图组交付（S7）的 **状态编排器**。它内置了「工业设计大师」认知层技能，并提供 6 个工具用于项目状态、变量锁定、生成复现与一致性校验的落地。
+把一次工业设计需求从 Brief 冻结（S0）逐步推进到正交视图组交付（S7）的 **状态编排器**。它内置了「工业设计大师」认知层技能，并提供 11 个工具用于项目状态、变量锁定、生成复现、调研洞察、DNA/CMF/几何归档与一致性校验（含机器判定器打分）。
 
 > 配套 PRD：`工业设计大师Agent_PRD_v1.5`。本插件是三步路径（认知层 → 生图接入 → 状态机插件）的第 ③ 步。
 
@@ -23,30 +23,36 @@ pnpm dsh plugin --profile <profile> add dsh-image-gen
 ## 功能
 
 - **内置技能** `industrial-design-master`：七阶段状态机（S0–S7 + S5.5）、变量锁定矩阵、一致性校验清单（10.2）、品类动态锁定、generation_record 模板。加载后模型即充当工业设计编排者。
-- **6 个工具**：
+- **11 个工具**：
   | 工具 | 作用 |
   | --- | --- |
-  | `industrial_project_init` | S0 立项，冻结 Brief（category_id 必填） |
+  | `industrial_project_init` | S0 立项，冻结 Brief（category_id 必填，可白名单校验） |
   | `industrial_advance_stage` | 阶段推进 / 回流（前进不跳级，回流需理由） |
   | `industrial_lock_variables` | 记录变量锁定矩阵 |
-  | `industrial_record_generation` | 写 generation_record（可复现） |
-  | `industrial_record_consistency` | 记录 10.2 逐项判定（机器/人工/混合） |
-  | `industrial_get_state` | 读取当前项目状态 |
+  | `industrial_record_generation` | 写 generation_record（含 view/control_mode/参考图/锚强度，可复现） |
+  | `industrial_record_consistency` | 记录 10.2 逐项判定（机器/人工/混合，可带 view_group） |
+  | `industrial_compute_consistency` | 机器判定器：聚合特征级一致率/组级通过率并与阈值比对 |
+  | `industrial_synthesize_research` | S1 归档调研洞察（fact/inference/tbd 三态标注） |
+  | `industrial_record_dna` | S5 记录设计 DNA（自动生成 design_dna_id） |
+  | `industrial_record_cmf` | S6 记录 CMF 规格书 |
+  | `industrial_record_geometry` | S5.5/S6 记录几何骨架/STEP/IGES/OBJ 导出 |
+  | `industrial_get_state` | 读取当前状态（含生图/cad 检测、一致性聚合、summary） |
 - **状态持久化**：项目状态存于 `$DSH_HOME/industrial-design/projects.json`（MVP 为单文件、非跨进程安全，后续版本迁到 sessionProjections/configEditor）。
 - **交互确认**：技能会在关键决策点调用 `ask_user_question` 弹出交互选择框（带推荐选项 + 允许自由输入），用于 S0 冻结 Brief / S3 选方向 / S4 选方案 / S5 确认 DNA / S7 签收。
 - **双端可用**：本插件为 Host bundle，桌面端与网页版（Web GUI）均可使用；工具与状态存储在宿主运行时，与客户端形态无关。
 
-## 配置（v0.3.2）
+## 配置（v0.4.0）
 
 在「设置 → 插件 → industrial-design」里配置以下参数（填写即覆盖默认值；`industrial_get_state` 返回的 `config` 字段为当前生效值）：
 
 | 参数 | 默认 | 说明 | 示例 |
 | --- | --- | --- | --- |
 | `firstCategoryN` | 30 | 首批品类（`first_project.category_id`）收敛所需样本量 N：攒满 N 个同类项目后才按品类分层统计放行 | 30；首批品类是「手持设备 handheld」时就等攒满 30 个 handheld 项目 |
-| `consistencyThreshold` | 0.9 | S7 一致性阈值（0~1）：正交视图组与设计 DNA 的同源一致率须 ≥ 此值才放行 | 0.9 = ≥90%；放宽到 0.8 即 ≥80% |
+| `consistencyThreshold` | 0.9 | S7 一致性阈值（0~1）：正交视图组与设计 DNA 的同源一致率须 ≥ 此值才放行；`industrial_compute_consistency` 用它判定达标/不达标 | 0.9 = ≥90%；放宽到 0.8 即 ≥80% |
 | `skeletonMatchThreshold` | 0.85 | S5.5 几何骨架吻合度阈值（0~1）：骨架投影与锚定线稿关键特征线吻合度须 ≥ 此值 | 0.85 = ≥85%；越接近 1 越严格 |
 | `maxConvergenceRounds` | 3 | 同一方向触顶失败后的收敛轮次上限 | 3 = 连续 3 轮不达标即回退 S2 或更换方向 |
 | `categoryList` | [] | 允许的品类白名单（品类 id 数组）。空数组 = 不限制；非空时 `industrial_project_init` 的 `category_id` 必须在列 | `["handheld","wearable","desktop"]` 只允许这三个品类 |
+| `cadMCP` | "" | CAD MCP 工具名前缀（用于真实几何导出）。留空则 `industrial_get_state` 按内置已知 CAD 工具名检测 | `"freecad_mcp"` 或 `"cad"`，留空自动检测 |
 
 > 说明：参数带「中文描述 + 示例」会随配置表单一起显示；README 这里同步维护一份便于离线查阅。
 
@@ -65,23 +71,24 @@ pnpm dsh plugin --profile <profile> add ./dsh-industrial-design
 pnpm dsh plugin --profile <profile> add git+https://github.com/<you>/dsh-industrial-design.git
 ```
 
-安装后重启对应 Profile，技能 `industrial-design-master` 与 6 个工具即生效。
+安装后重启对应 Profile，技能 `industrial-design-master` 与 11 个工具即生效。
 
 ## 使用
 
 在对话中直接说「帮我做一个 XX 产品的外观设计」，加载技能后模型会：
 
 1. S0 用 `industrial_project_init` 建项目、渐进追问冻结 Brief；
-2. S1–S6 逐步推进，每次进入/离开阶段都核对门禁；
-3. S7 用 `industrial_record_consistency` 记录一致性判定，用 `industrial_record_generation` 记录每张生成图的复现参数。
+2. S1–S6 逐步推进，每次进入/离开阶段都核对门禁；S1 用 `industrial_synthesize_research` 归档洞察、S5 用 `industrial_record_dna` 锁 DNA、S5.5/S6 用 `industrial_record_geometry` 记录骨架/几何、S6 用 `industrial_record_cmf` 记录 CMF；
+3. S7 用 `industrial_record_consistency` 记录一致性判定，用 `industrial_record_generation` 记录每张生成图的复现参数（含几何锚），最后用 `industrial_compute_consistency` 聚合判定是否达标。
 
 ## 项目结构
 
 ```
 dsh-industrial-design/
-├── index.js                       # Host 插件入口（注册技能 + 6 工具）
+├── index.js                       # Host 插件入口（注册技能 + 11 工具）
 ├── cordis.patch.yml               # bundle 装载清单
 ├── package.json                   # dsh.bundle.patch 元数据
+├── lib/client.js                  # Client 设置表单卡片（plugins.bundle.config）
 ├── skills/industrial-design-master/
 │   └── SKILL.md                   # 内置认知层技能（含 frontmatter）
 ├── locale/en.json · zh.json       # 显示名与描述
@@ -90,10 +97,11 @@ dsh-industrial-design/
 └── LICENSE                        # Apache-2.0
 ```
 
-## MVP 边界（v0.1.0 明确不做）
+## MVP 边界（延后项）
 
-- 机器判定器打分、golden set 回归、RBAC 多用户签收、知识库 L1–L6、DFM 工程校验（L5 仅保留最小四规则提示）。
-- UI 面板（自定义面板；Config 参数表单已由 v0.2.0 的 Config schema + volatile 字段自动提供）。
+- 机器判定器已提供 `industrial_compute_consistency` 的规则聚合（特征级一致率/组级通过率），但「机器视觉自动打分」仍需接入图像判定后端；golden set 回归、RBAC 多用户签收、知识库 L1–L6、DFM 工程校验（L5 仅保留最小四规则提示）仍在延后清单。
+- UI 面板（自定义面板；Config 参数表单已由 Config schema + client 卡片提供）。
+- 智能产品 UI 草图、实时迭代（需 UI 大改）。
 - 外观专利检索：仅启发式提示，不构成法律意见。
 
 ## License

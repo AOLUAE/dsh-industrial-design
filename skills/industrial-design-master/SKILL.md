@@ -11,6 +11,7 @@ whenToUse: 用户发起工业设计或产品外观设计需求、要求按阶段
 ## 0. 使用方式（模型须知）
 
 - S7 视图渲染依赖「已配置的生图工具」（如 `generate_image` / `generate_images` / `edit_image`，可由 dsh-image-gen 或任意具备生图能力的插件提供）。进入 S7 前用 `industrial_get_state` 确认 `image_gen_available`；若为 false，明确告知用户「需先安装并配置一个生图插件」，不得编造或跳过出图步骤。
+- 本流程配套 11 个 `industrial_*` 工具：`industrial_project_init` / `industrial_advance_stage` / `industrial_lock_variables` / `industrial_record_generation` / `industrial_record_consistency` / `industrial_compute_consistency` / `industrial_synthesize_research` / `industrial_record_dna` / `industrial_record_cmf` / `industrial_record_geometry` / `industrial_get_state`。各阶段用哪个见 §1 对应小节。
 - 需要用户拍板时（冻结 Brief / 选定方向 / 选定方案 / 确认 DNA / 确认 CMF / 签收），调用 `ask_user_question` 工具弹出交互选择框（带推荐选项 + 允许自由输入），禁止用纯文本开放式提问替代。详见 §1「用户确认交互」。
 - 每阶段进入前先检查「准入门禁」；不满足则回流上一阶段补齐。
 - 每阶段离开前必须通过「准出门禁」；不通过则在该阶段内迭代。
@@ -34,6 +35,7 @@ whenToUse: 用户发起工业设计或产品外观设计需求、要求按阶段
 ### S1 调研与洞察
 - 动作：市场格局扫描、竞品拆解（外观/尺寸/结构/材质/卖点/定价/优缺点）、痛点痒点提炼、用户旅程地图、材料工艺与技术趋势预研。
 - 标注规则：每条结论标记「事实（带来源）/推断/待验证」；无来源结论不得作为方向推导依据。
+- 归档：用 `industrial_synthesize_research` 把洞察清单结构化归档（每条含 id/statement/source/type），工具会返回事实级洞察数与准出门禁提示。
 - 产出：调研报告、竞品矩阵、洞察清单（编号 I-01…）、用户旅程图。
 - 准出门禁：≥5 条事实级洞察，且用户确认无重大遗漏。
 
@@ -56,17 +58,21 @@ whenToUse: 用户发起工业设计或产品外观设计需求、要求按阶段
 
 ### S5 方案选定与 DNA 锁定
 - 动作：抽取并冻结设计 DNA——轮廓比例、主特征线、关键 R 角、分件逻辑、CMF 基调、LOGO 位、人机基准尺寸，生成唯一 design_dna_id。
+- 归档：用 `industrial_record_dna` 记录结构化 DNA（silhouette_ratio/feature_lines/key_radii/parting_logic/cmf_base/logo_position/ergonomic_dims/anchor_sketch），工具自动生成 design_dna_id。
 - 产出：Design DNA 文档（结构化字段 + 锚定线稿），作为 S6/S7 的单一真源。
 - 准出门禁：用户确认 DNA；此后所有视图变更必须回流修改 DNA，禁止直接在图上改。
 
 ### S5.5 轻量几何骨架（MVP）
 - 动作：由 S5 锚定线稿重建可投影的粗几何。表示形式（参数化图元/体素/单目 3D 重建）由技术负责人选定并记录；不产出可编辑参数化模型。
+- 归档：用 `industrial_record_geometry` 记录骨架导出（format=STEP/IGES/OBJ/3DM 或 image 降级、file_path、source=skeleton/cad_mcp/manual、skeleton_match 吻合度）。
 - 准出门禁：骨架投影线稿与锚定线稿关键特征线吻合度 ≥ 阈值（默认 0.85，可经插件配置 skeletonMatchThreshold 调整；关键点误差/投影 IoU，阈值随品类画像取值）；未达标回流 S5 修正锚定线稿，不得带病进入 S7。
 - 产出：轻量几何骨架（含投影参数 + 吻合度报告）。
 - 作用：作为 S7 正交投影输入，消除「由骨架投影」的悬空。
 
 ### S6 深化设计
 - 动作：三维粗模（中间格式 STEP/IGES/OBJ/3DM，启动前决策）；人机尺寸校核；CMF 规格书（材质/喷涂/电镀/拉丝/软胶/透明件/纹理/色号/LOGO 工艺）；DFM 初检（拔模角/壁厚均匀/装配间隙/分模面/堆叠干涉/防水筋位）；BOM 初稿与成本估算；外观专利近似风险提示。
+- 真实几何：若 `industrial_get_state` 返回 `cad_available=true`（或已配置 cadMCP 前缀），用 CAD 工具导出 STEP/IGES/OBJ，并用 `industrial_record_geometry` 记录（dimensions_checked + dfm_notes）；否则降级为「图 + 说明」并如实标注未接入 CAD。
+- CMF 归档：用 `industrial_record_cmf` 记录 CMF 规格书（spec/options/selected）；用户确认 CMF 时走 ask_user_question 交互框选方案。
 - 产出：三维粗模、CMF 规格书、人机校核表、DFM 问题清单、设计说明。
 - 准出门禁：DFM 无阻断级问题，用户确认 CMF。
 - MVP 裁剪：仅保留 CMF 规格书 + 基础 DFM 提示（L5 最小版四规则：拔模角/壁厚均匀/分模面/装配间隙），不产出三维粗模/人机校核/BOM。
@@ -74,7 +80,8 @@ whenToUse: 用户发起工业设计或产品外观设计需求、要求按阶段
 ### S7 视图与渲染交付
 - 前置条件：需「已配置的生图工具」（`generate_image` / `edit_image`，由 dsh-image-gen 或任意具备生图能力的插件提供）。进入前用 `industrial_get_state` 看 `image_gen_available`；为 false 则先告知用户安装并配置任一生图插件，再继续，禁止跳过出图。
 - 生成管线（禁止一键文生图）：① 由几何骨架投出正交线稿（正/侧/背/俯 + 比例网格 + 关键尺寸）；② 以线稿或骨架作几何锚（Canny/Lineart/Depth 条件控制）锁定轮廓与体积；③ 构图与渲染解耦，AI 仅补材质/光影/环境，不改变结构；④ 同源生成透视图与场景渲染，共享同一 design_dna_id。
-- 一致性校验清单：主特征线位置、总长宽高比例、分件线连续性、R 角、按键与接口数量及位置、LOGO 位、CMF 表现（逐项判定方式见 §4）。
+- 几何锚定（每条 generation_record 必填）：`control_mode` 取 canny/lineart/depth（禁止 none）；`reference_image` 指向锚定线稿/骨架投影；`reference_strength`（几何锚强度）与 `adapter_strength`（IP-Adapter/MV-Adapter 一致性强度）按需给值。正交视图组（正/侧/背/俯）之间用 IP-Adapter/MV-Adapter 锁风格+身份一致。
+- 一致性校验清单：主特征线位置、总长宽高比例、分件线连续性、R 角、按键与接口数量及位置、LOGO 位、CMF 表现（逐项判定方式见 §4）。逐项用 `industrial_record_consistency` 记录（可带 view_group），完成后用 `industrial_compute_consistency` 聚合「特征级一致率/组级通过率」并与阈值比对判定 达标/不达标。
 - 产出：正交视图组（正/侧/背/俯带尺寸）、透视图与场景渲染、设计说明、决策记录、CMF 表、版本快照、交付清单。
 - 准出门禁：一致性校验通过 + 用户签收。
 
@@ -127,6 +134,7 @@ whenToUse: 用户发起工业设计或产品外观设计需求、要求按阶段
 
 - 机器判定器上线前须用 golden set 抽 10 组做「机器 vs 人评」对齐，判定一致率 ≥90%（默认，可经插件配置 consistencyThreshold 调整）方可启用；周期内复校。
 - 除组级二值外，记录「特征级一致率」= 通过的特征项数 / 抽检总特征项数（观察项，分辨系统性漂移 vs 偶发失误）。
+- 量化落地：全部逐项记录完成后调用 `industrial_compute_consistency`，它聚合出 feature_consistency_rate（特征级一致率）与 group_pass_rate（组级通过率，需逐项带 view_group），与 consistencyThreshold 比对给出 达标/不达标 判定。
 
 ## 5. 触顶失败收敛（10.3）
 
@@ -170,6 +178,11 @@ whenToUse: 用户发起工业设计或产品外观设计需求、要求按阶段
 | seed | 随机种子 |
 | model_version | 生成模型版本 |
 | prompt / prompt_hash | 提示词或其哈希 |
+| view | 视图（front/side/back/top/45/perspective/scene/cmf） |
+| control_mode | 几何锚定方式（canny/lineart/depth；正交视图禁止 none 裸文生图） |
+| reference_image | 几何锚参考图（锚定线稿/骨架投影） |
+| reference_strength | 几何锚强度 0~1（ControlNet） |
+| adapter_strength | 一致性适配强度 0~1（IP-Adapter/MV-Adapter） |
 | skeleton_hash | 几何骨架 hash |
 | condition_params | 条件控制参数（Canny/Lineart/Depth 阈值） |
 | timestamp | 生成时间戳 |
