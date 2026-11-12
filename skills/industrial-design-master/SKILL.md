@@ -11,8 +11,8 @@ whenToUse: 用户发起工业设计或产品外观设计需求、要求按阶段
 ## 0. 使用方式（模型须知）
 
 - S7 视图渲染依赖「已配置的生图工具」（如 `generate_image` / `generate_images` / `edit_image`，可由 dsh-image-gen 或任意具备生图能力的插件提供）。进入 S7 前用 `industrial_get_state` 确认 `image_gen_available`；若为 false，明确告知用户「需先安装并配置一个生图插件」，不得编造或跳过出图步骤。
-- 本流程配套 11 个 `industrial_*` 工具：`industrial_project_init` / `industrial_advance_stage` / `industrial_lock_variables` / `industrial_record_generation` / `industrial_record_consistency` / `industrial_compute_consistency` / `industrial_synthesize_research` / `industrial_record_dna` / `industrial_record_cmf` / `industrial_record_geometry` / `industrial_get_state`。各阶段用哪个见 §1 对应小节。
-- 需要用户拍板时（冻结 Brief / 选定方向 / 选定方案 / 确认 DNA / 确认 CMF / 签收），调用 `ask_user_question` 工具弹出交互选择框（带推荐选项 + 允许自由输入），禁止用纯文本开放式提问替代。详见 §1「用户确认交互」。
+- 本流程配套 12 个 `industrial_*` 工具：`industrial_project_init` / `industrial_advance_stage` / `industrial_confirm` / `industrial_lock_variables` / `industrial_record_generation` / `industrial_record_consistency` / `industrial_compute_consistency` / `industrial_synthesize_research` / `industrial_record_dna` / `industrial_record_cmf` / `industrial_record_geometry` / `industrial_get_state`。各阶段用哪个见 §1 对应小节。
+- 需要用户拍板时（冻结 Brief / 选定方向 / 选定方案 / 确认 DNA / 确认 CMF / 签收），走「交互确认」三步闭环：① `industrial_advance_stage` 前进时若命中确认门禁会返回 `blocked`（含确认节点与问题）；② 据此调 `ask_user_question` 弹框拿到答案；③ 用 `industrial_confirm` 记录确认，再重新 `industrial_advance_stage` 放行。详见 §1「用户确认交互」。
 - 每阶段进入前先检查「准入门禁」；不满足则回流上一阶段补齐。
 - 每阶段离开前必须通过「准出门禁」；不通过则在该阶段内迭代。
 - 关键图像生成必须写 generation_record（见 §8 与 `templates/generation_record.md`）。
@@ -85,15 +85,28 @@ whenToUse: 用户发起工业设计或产品外观设计需求、要求按阶段
 - 产出：正交视图组（正/侧/背/俯带尺寸）、透视图与场景渲染、设计说明、决策记录、CMF 表、版本快照、交付清单。
 - 准出门禁：一致性校验通过 + 用户签收。
 
-### 用户确认交互（ask_user_question）
+### 用户确认交互（交互确认门禁，代码硬校验）
 
-所有需要用户拍板的关键节点——S0 冻结 Brief、S2 确认权重、S3 选定方向、S4 选定方案、S5 确认 DNA、S6 确认 CMF、S7 签收——一律调用 `ask_user_question` 工具弹出交互选择框，而非用纯文本开放式提问。
+所有需要用户拍板的关键节点，由**状态机硬校验**：`industrial_advance_stage` 前进时若当前阶段属于确认门禁（见下表）且尚未记录确认，会返回 `blocked`（含 `requires_confirmation` / `confirmation_label` / `confirmation_question`），此时**不推进、不改状态**。
 
-- 每问给 `id`（稳定标识）+ `question`（一句具体问题）+ 可选 `header`。
-- `options` 给候选：把推荐项放第一并在 label 标「（推荐）」；`description` 一句说明取舍。
-- 单选 / 多选（如方向混合「A 轮廓 + B 配色」）用 `multi_select` 控制。
-- 该工具自带「自由输入」通道：用户可在选项之外直接输入文字（custom）；拿到 custom 后按自由文本理解并结构化归档。
-- 用户跳过（无选择且无 custom）时，不要重复追问，按「未指定 + 待验证」继续并在决策记录中标注。
+| 离开阶段 | 确认节点(node) | 提问底稿（按实际项目补 options） |
+| --- | --- | --- |
+| S0 | brief_frozen | 是否确认冻结 Brief（含品类 category_id）？ |
+| S1 | insights_confirmed | 调研洞察是否已无重大遗漏？ |
+| S3 | direction_selected | 请选定要进入 S4 的设计方向。 |
+| S4 | concept_selected | 请选定要进入 S5 的方案。 |
+| S5 | dna_confirmed | 是否确认冻结 Design DNA？ |
+| S6 | cmf_confirmed | 是否确认 CMF 规格？ |
+| S7 | signed_off | 是否签收最终交付？ |
+
+三步闭环（缺一不可）：
+1. 调 `industrial_advance_stage`；若返回 `blocked`，说明命中确认门禁。
+2. 调 `ask_user_question` 弹框：`question` 用上表底稿，`options` 用本项目实际的方向/方案/选项（推荐项放首并标「（推荐）」；方向混合等用 `multi_select`；该工具自带「自由输入」通道）。
+3. 拿到用户答案后，调 `industrial_confirm`（project_id + node + choice）记录，再重新 `industrial_advance_stage` 即可放行。
+
+- 用户跳过（无选择且无 custom）时，不要重复追问，`industrial_confirm` 的 `choice` 记「未指定」，后续按「未指定 + 待验证」继续并在决策记录中标注。
+- 回流会自动清掉回流目标阶段及其之后的确认记录，重新推进时须重新确认。
+- S7 的 `signed_off` 是终点签收：`industrial_get_state` 在 S7 未签收时 `pending_confirmation` 会给出 signed_off，按同样闭环用 `industrial_confirm` 记录签收。
 
 ## 2. 品类动态锁定 category_id
 

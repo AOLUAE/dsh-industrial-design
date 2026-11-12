@@ -1,8 +1,8 @@
 # dsh-industrial-design
 
-工业设计大师 · S0–S7 状态机插件（v0.4.0）
+工业设计大师 · S0–S7 状态机插件（v0.4.1）
 
-把一次工业设计需求从 Brief 冻结（S0）逐步推进到正交视图组交付（S7）的 **状态编排器**。它内置了「工业设计大师」认知层技能，并提供 11 个工具用于项目状态、变量锁定、生成复现、调研洞察、DNA/CMF/几何归档与一致性校验（含机器判定器打分）。
+把一次工业设计需求从 Brief 冻结（S0）逐步推进到正交视图组交付（S7）的 **状态编排器**。它内置了「工业设计大师」认知层技能，并提供 12 个工具用于项目状态、交互确认门禁、变量锁定、生成复现、调研洞察、DNA/CMF/几何归档与一致性校验（含机器判定器打分）。
 
 > 配套 PRD：`工业设计大师Agent_PRD_v1.5`。本插件是三步路径（认知层 → 生图接入 → 状态机插件）的第 ③ 步。
 
@@ -23,11 +23,12 @@ dsh plugin --profile <profile> add dsh-image-gen
 ## 功能
 
 - **内置技能** `industrial-design-master`：七阶段状态机（S0–S7 + S5.5）、变量锁定矩阵、一致性校验清单（10.2）、品类动态锁定、generation_record 模板。加载后模型即充当工业设计编排者。
-- **11 个工具**：
+- **12 个工具**：
   | 工具 | 作用 |
   | --- | --- |
   | `industrial_project_init` | S0 立项，冻结 Brief（category_id 必填，可白名单校验） |
-  | `industrial_advance_stage` | 阶段推进 / 回流（前进不跳级，回流需理由） |
+  | `industrial_advance_stage` | 阶段推进 / 回流（前进不跳级，回流需理由；前进硬校验交互确认门禁，未确认返回 blocked） |
+  | `industrial_confirm` | 记录用户在各确认节点的拍板结果（advance_stage 放行前须先经 ask_user_question 问询并记录） |
   | `industrial_lock_variables` | 记录变量锁定矩阵 |
   | `industrial_record_generation` | 写 generation_record（含 view/control_mode/参考图/锚强度，可复现） |
   | `industrial_record_consistency` | 记录 10.2 逐项判定（机器/人工/混合，可带 view_group） |
@@ -38,10 +39,10 @@ dsh plugin --profile <profile> add dsh-image-gen
   | `industrial_record_geometry` | S5.5/S6 记录几何骨架/STEP/IGES/OBJ 导出 |
   | `industrial_get_state` | 读取当前状态（含生图/cad 检测、一致性聚合、summary） |
 - **状态持久化**：项目状态存于 `$DSH_HOME/industrial-design/projects.json`（MVP 为单文件、非跨进程安全，后续版本迁到 sessionProjections/configEditor）。
-- **交互确认**：技能会在关键决策点调用 `ask_user_question` 弹出交互选择框（带推荐选项 + 允许自由输入），用于 S0 冻结 Brief / S3 选方向 / S4 选方案 / S5 确认 DNA / S7 签收。
+- **交互确认（硬校验）**：S0 冻结 Brief / S3 选方向 / S4 选方案 / S5 确认 DNA / S6 确认 CMF / S7 签收等关键决策点由状态机强制——`industrial_advance_stage` 前进时若未确认会返回 `blocked`，模型据此调 `ask_user_question` 弹框（推荐选项 + 自由输入）拿到答案后用 `industrial_confirm` 记录，方能放行。
 - **双端可用**：本插件为 Host bundle，桌面端与网页版（Web GUI）均可使用；工具与状态存储在宿主运行时，与客户端形态无关。
 
-## 配置（v0.4.0）
+## 配置（v0.4.1）
 
 在「设置 → 插件 → industrial-design」里配置以下参数（填写即覆盖默认值；`industrial_get_state` 返回的 `config` 字段为当前生效值）：
 
@@ -73,7 +74,7 @@ git clone https://github.com/AOLUAE/dsh-industrial-design.git
 dsh plugin --profile <profile> add ./dsh-industrial-design
 ```
 
-把 `<profile>` 换成你的 profile 名（如 `desktop` / `web` / `tui`，即 `$DSH_HOME/profiles/` 下的目录名）。安装后重启对应 Profile，技能 `industrial-design-master` 与 11 个工具即生效。
+把 `<profile>` 换成你的 profile 名（如 `desktop` / `web` / `tui`，即 `$DSH_HOME/profiles/` 下的目录名）。安装后重启对应 Profile，技能 `industrial-design-master` 与 12 个工具即生效。
 
 > 也可以在 DeepSeek Harness 图形界面的「设置 → 插件」里安装：粘贴上面的 `git+...` 地址，或选择 clone 下来的本地目录。
 
@@ -89,7 +90,7 @@ dsh plugin --profile <profile> add ./dsh-industrial-design
 
 ```
 dsh-industrial-design/
-├── index.js                       # Host 插件入口（注册技能 + 11 工具）
+├── index.js                       # Host 插件入口（注册技能 + 12 工具）
 ├── cordis.patch.yml               # bundle 装载清单
 ├── package.json                   # dsh.bundle.patch 元数据
 ├── lib/client.js                  # Client 设置表单卡片（plugins.bundle.config）

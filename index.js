@@ -115,6 +115,30 @@ const GATES = {
   S7: '准出：一致性校验通过 + 用户签收。'
 }
 
+// 交互确认门禁：离开该阶段前必须已由用户确认（ask_user_question → industrial_confirm 记录）。
+// 未确认时 industrial_advance_stage 返回 blocked 而非推进；S2/S5.5 为自动/机器门禁，不在此列。
+const CONFIRM_GATES = {
+  S0: { key: 'brief_frozen', label: '冻结 Brief', question: '是否确认冻结 Brief（含品类 category_id）？' },
+  S1: { key: 'insights_confirmed', label: '确认洞察无遗漏', question: '调研洞察是否已无重大遗漏？' },
+  S3: { key: 'direction_selected', label: '选定设计方向', question: '请选定要进入 S4 的设计方向。' },
+  S4: { key: 'concept_selected', label: '选定方案', question: '请选定要进入 S5 的方案。' },
+  S5: { key: 'dna_confirmed', label: '确认 Design DNA', question: '是否确认冻结 Design DNA？' },
+  S6: { key: 'cmf_confirmed', label: '确认 CMF', question: '是否确认 CMF 规格？' },
+  S7: { key: 'signed_off', label: '签收', question: '是否签收最终交付？' }
+}
+
+const CONFIRM_NODES = Object.values(CONFIRM_GATES).map((g) => g.key)
+
+function confirmKeysAtOrAfter(stage) {
+  const idx = STAGES.indexOf(stage)
+  const keys = []
+  for (let i = idx; i < STAGES.length; i++) {
+    const g = CONFIRM_GATES[STAGES[i]]
+    if (g) keys.push(g.key)
+  }
+  return keys
+}
+
 function newProject(args) {
   return {
     projectId: args.project_id,
@@ -125,6 +149,7 @@ function newProject(args) {
     brief: args.brief || {},
     locked: {},
     lockedAllow: [],
+    confirmations: {},
     generations: [],
     consistency: [],
     research: [],
@@ -191,7 +216,7 @@ function makeProjectInit(getCfg) {
 const advanceStage = {
   name: 'industrial_advance_stage',
   description:
-    '推进设计阶段（S0→S1→…→S7）。默认前进一格；可显式回流到较早阶段（须给 reason）。前进不可跳级。返回新状态与下一阶段准出门禁提示。',
+    '推进设计阶段（S0→S1→…→S7）。默认前进一格；可显式回流到较早阶段（须给 reason）。前进不可跳级。前进时硬校验交互确认门禁：若当前阶段需用户确认且未记录，返回 blocked（须先 ask_user_question → industrial_confirm 再推进）。',
   parameters: {
     type: 'object',
     properties: {
@@ -217,6 +242,30 @@ const advanceStage = {
       if (curIdx >= STAGES.length - 1) throw new Error('已在 S7（终点）。')
       targetIdx = curIdx + 1
     }
+    const isForward = targetIdx > curIdx
+
+    // 前进：先校验「交互确认」门禁——离开当前阶段前必须已记录用户确认，否则 block（不推进、不改状态）。
+    if (isForward) {
+      const gate = CONFIRM_GATES[p.stage]
+      if (gate && !(p.confirmations && p.confirmations[gate.key])) {
+        return {
+          blocked: true,
+          stage: p.stage,
+          next_stage: STAGES[targetIdx],
+          requires_confirmation: gate.key,
+          confirmation_label: gate.label,
+          confirmation_question: gate.question,
+          instruction:
+            '必须先用 ask_user_question 向用户确认（options 用本项目实际的方向/方案/选项，推荐项放首并标注「（推荐）」，multi_select 默认 false），拿到用户答案后调 industrial_confirm 记录，再重新调 industrial_advance_stage。未确认前无法推进。'
+        }
+      }
+    } else {
+      // 回流：清掉回流目标阶段及其之后的确认记录，迫使重新确认。
+      for (const key of confirmKeysAtOrAfter(STAGES[targetIdx])) {
+        if (p.confirmations) delete p.confirmations[key]
+      }
+    }
+
     if (curIdx === 0 && targetIdx === 1 && !p.categoryId) {
       throw new Error('S0 准出需要 category_id（品类未声明）。用 industrial_project_init 声明品类后再推进。')
     }
@@ -224,9 +273,9 @@ const advanceStage = {
     const from = p.stage
     p.stage = STAGES[targetIdx]
     p.updatedAt = Date.now()
-    p.changelog.push({ at: Date.now(), from, to: p.stage, reason: args.reason || (targetIdx > curIdx ? 'advance' : 'reflow') })
+    p.changelog.push({ at: Date.now(), from, to: p.stage, reason: args.reason || (isForward ? 'advance' : 'reflow') })
     saveStore(store)
-    return { ...p, gate_hint: GATES[p.stage] || '' }
+    return { ...p, gate_hint: GATES[p.stage] || '', confirmed_gates: Object.keys(p.confirmations || {}) }
   }
 }
 
@@ -522,6 +571,42 @@ const recordGeometry = {
   }
 }
 
+const recordConfirm = {
+  name: 'industrial_confirm',
+  description:
+    '记录用户在关键决策点的确认结果（交互确认门禁）。模型必须先调 ask_user_question 拿到用户答案，再用本工具记录；industrial_advance_stage 会硬校验对应阶段是否已确认，未确认无法推进。S7 签收通过 node=signed_off 记录。',
+  parameters: {
+    type: 'object',
+    properties: {
+      project_id: { type: 'string', description: '项目 ID' },
+      node: { type: 'string', enum: CONFIRM_NODES, description: '确认节点：brief_frozen=冻结Brief / insights_confirmed=确认洞察 / direction_selected=选定方向 / concept_selected=选定方案 / dna_confirmed=确认DNA / cmf_confirmed=确认CMF / signed_off=签收' },
+      choice: { type: 'string', description: '用户的选择/答案（如「冻结，进入调研」「方向A」）' },
+      note: { type: 'string', description: '备注' }
+    },
+    required: ['project_id', 'node', 'choice']
+  },
+  output: OUTPUT,
+  async execute(args) {
+    const store = loadStore()
+    const p = mustProject(store, args.project_id)
+    p.confirmations = p.confirmations || {}
+    p.confirmations[args.node] = { choice: args.choice, note: args.note || '', at: Date.now(), timestamp: new Date().toISOString() }
+    p.updatedAt = Date.now()
+    p.changelog.push({ at: Date.now(), kind: 'confirm', node: args.node, choice: args.choice })
+    saveStore(store)
+    const remaining = CONFIRM_NODES.filter((n) => !p.confirmations[n])
+    return {
+      project_id: p.projectId,
+      stage: p.stage,
+      node: args.node,
+      choice: args.choice,
+      confirmed: Object.keys(p.confirmations),
+      remaining_unconfirmed: remaining,
+      hint: remaining.length > 0 ? `剩余待确认节点：${remaining.join(' / ')}（按阶段推进时逐个确认）。` : '全部确认节点已完成。'
+    }
+  }
+}
+
 function makeComputeConsistency(getCfg) {
   return {
     name: 'industrial_compute_consistency',
@@ -654,7 +739,15 @@ function makeGetState(ctx, getCfg) {
           cmf_records: (p.cmf || []).length,
           geometry_records: (p.geometry || []).length
         },
-        config: cfg
+        config: cfg,
+        confirmations: p.confirmations || {},
+        pending_confirmation: (() => {
+          const gate = CONFIRM_GATES[p.stage]
+          if (gate && !(p.confirmations && p.confirmations[gate.key])) {
+            return { stage: p.stage, key: gate.key, label: gate.label, question: gate.question }
+          }
+          return null
+        })()
       }
     }
   }
@@ -711,6 +804,7 @@ export function apply(ctx, config = {}) {
       ctx.tools.register(recordDna),
       ctx.tools.register(recordCmf),
       ctx.tools.register(recordGeometry),
+      ctx.tools.register(recordConfirm),
       ctx.tools.register(makeComputeConsistency(getCfg)),
       ctx.tools.register(makeGetState(ctx, getCfg))
     ]
