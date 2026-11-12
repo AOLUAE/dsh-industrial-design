@@ -667,6 +667,61 @@ function makeComputeConsistency(getCfg) {
   }
 }
 
+// 检测生图工具「能力」而非仅名字：读取每个标准工具的参数 schema，
+// 判断是否支持参考图输入（source/source_path 等）与 ControlNet/workflow 几何锚定。
+// 注意：这是「声明能力」检测（工具暴露了什么参数），不是「实测能力」（后端是否真按这些参数出图）。
+function probeImageCapability(ctx) {
+  const getDef = (n) => {
+    if (!ctx.tools || typeof ctx.tools.get !== 'function') return undefined
+    try { return ctx.tools.get(n) } catch { return undefined }
+  }
+  const paramNames = (def) => {
+    const p = def && def.parameters
+    const props = p && typeof p === 'object' ? p.properties : undefined
+    return props && typeof props === 'object' ? Object.keys(props) : []
+  }
+  const REF_FIELDS = ['source', 'source_path', 'source_paths', 'source_attachment_id', 'source_attachment_ids', 'reference_image', 'reference_images', 'init_image', 'image', 'images', 'control_image']
+  const WORKFLOW_FIELDS = ['workflow', 'workflow_json', 'controlnet', 'control_mode', 'controlnet_image']
+  const STRENGTH_FIELDS = ['reference_strength', 'adapter_strength', 'strength', 'denoise', 'controlnet_strength', 'conditioning_scale']
+
+  const probe = (name) => {
+    const def = getDef(name)
+    if (!def) return null
+    const props = paramNames(def)
+    const refFields = props.filter((f) => REF_FIELDS.includes(f))
+    const workflowFields = props.filter((f) => WORKFLOW_FIELDS.includes(f))
+    const strengthFields = props.filter((f) => STRENGTH_FIELDS.includes(f))
+    const anchoring = workflowFields.length > 0 ? 'workflow' : refFields.length > 0 ? 'reference' : 'text_only'
+    return { tool: name, anchoring, ref_fields: refFields, workflow_fields: workflowFields, strength_fields: strengthFields }
+  }
+
+  const detected = ['generate_image', 'generate_images', 'edit_image'].map(probe).filter(Boolean)
+  const names = detected.map((d) => d.tool)
+  let anchoring = 'none'
+  if (detected.length > 0) {
+    const hasWorkflow = detected.some((d) => d.workflow_fields.length > 0)
+    const hasRef = detected.some((d) => d.ref_fields.length > 0)
+    anchoring = hasWorkflow && hasRef ? 'full' : hasWorkflow ? 'workflow' : hasRef ? 'reference' : 'text_only'
+  }
+
+  const CAP_NOTES = {
+    none: '未检测到生图工具（generate_image / generate_images / edit_image）：S7 视图渲染需先安装并配置具备生图能力的插件。',
+    full: '支持几何锚定（ControlNet/workflow + 参考图输入），可产出 S7 正交视图组。',
+    workflow: '检测到 ControlNet/workflow 参数（可几何锚定），但未见参考图编辑入口——建议核实 edit_image 是否可用。',
+    reference: '检测到参考图输入（图生图/IP-Adapter），但未见 ControlNet/workflow 参数——多视图一致性需靠参考图锁定，几何锚定能力有限。',
+    text_only: '仅检测到 prompt 生图（纯文生图），无法满足 S7「禁止裸文生图」红线——请换用支持 ControlNet/参考图的条件控制插件。'
+  }
+
+  return {
+    names,
+    anchoring,
+    tools: detected,
+    note: names.length > 0
+      ? `已检测到生图工具：${names.join('、')}。能力判定：${CAP_NOTES[anchoring]}`
+      : CAP_NOTES.none
+  }
+}
+
 function makeGetState(ctx, getCfg) {
   return {
     name: 'industrial_get_state',
@@ -684,10 +739,8 @@ function makeGetState(ctx, getCfg) {
       const store = loadStore()
       const p = mustProject(store, args.project_id)
 
-      const IMAGE_TOOLS = ['generate_image', 'generate_images', 'edit_image']
-      const imageTools = ctx.tools && typeof ctx.tools.get === 'function'
-        ? IMAGE_TOOLS.filter((n) => ctx.tools.get(n))
-        : []
+      const cap = probeImageCapability(ctx)
+      const imageTools = cap.names
       const hasImageGen = imageTools.length > 0
 
       const cfg = getCfg()
@@ -718,9 +771,17 @@ function makeGetState(ctx, getCfg) {
         ...p,
         image_gen_available: hasImageGen,
         image_tools: imageTools,
-        image_gen_note: hasImageGen
-          ? `已检测到生图工具：${imageTools.join('、')}（由 dsh-image-gen 或任意具备生图能力的插件提供）。`
-          : '未检测到生图工具（generate_image / generate_images / edit_image）：S7 视图渲染需先安装并配置任一具备生图能力的插件。',
+        image_capability: {
+          anchoring: cap.anchoring,
+          tools: cap.tools.map((d) => ({
+            tool: d.tool,
+            anchoring: d.anchoring,
+            ref_fields: d.ref_fields,
+            workflow_fields: d.workflow_fields,
+            strength_fields: d.strength_fields
+          }))
+        },
+        image_gen_note: cap.note,
         cad_available: hasCad,
         cad_tools: cadTools,
         cad_note: hasCad

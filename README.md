@@ -1,6 +1,6 @@
 # dsh-industrial-design
 
-工业设计大师 · S0–S7 状态机插件（v0.4.2）
+工业设计大师 · S0–S7 状态机插件（v0.4.3）
 
 把一次工业设计需求从 Brief 冻结（S0）逐步推进到正交视图组交付（S7）的 **状态编排器**。它内置了「工业设计大师」认知层技能，并提供 12 个工具用于项目状态、交互确认门禁、变量锁定、生成复现、调研洞察、DNA/CMF/几何归档与一致性校验（含机器判定器打分）。
 
@@ -11,10 +11,10 @@
 S7 的「视图与渲染交付」依赖**生图工具** `generate_image` / `edit_image`。本插件**不内置**生图能力——因为生图需要你自己的凭据（API Key / 订阅 / ComfyUI），不是「装上插件就能出图」。
 
 - **S0–S6**：无需生图插件，状态机可独立运行。
-- **S7**：必须先安装并配置**任一具备生图能力的插件**（如 `dsh-image-gen`，或暴露 `generate_image` / `generate_images` / `edit_image` 工具的其他插件），否则模型会明确提示你「缺少生图工具」。
+- **S7**：必须先安装并配置**暴露 `generate_image` / `generate_images` / `edit_image` 标准工具、且支持几何锚定（ControlNet/workflow 或参考图输入）的生图插件**（如 `dsh-image-gen` 挂 ComfyUI / dashscope / openai-compat 硅基流动）。`industrial_get_state` 会按参数 schema 检测能力（`image_capability.anchoring`），`text_only` 或缺失时会明确提示你换用/安装支持条件控制的插件。
 
 ```bash
-# 示例：安装 dsh-image-gen（也可用任意具备生图能力的插件）
+# 示例：安装 dsh-image-gen（也可用其他暴露标准生图工具、且支持条件控制的插件）
 dsh plugin --profile <profile> add dsh-image-gen
 ```
 
@@ -37,12 +37,12 @@ dsh plugin --profile <profile> add dsh-image-gen
   | `industrial_record_dna` | S5 记录设计 DNA（自动生成 design_dna_id） |
   | `industrial_record_cmf` | S6 记录 CMF 规格书 |
   | `industrial_record_geometry` | S5.5/S6 记录几何骨架/STEP/IGES/OBJ 导出 |
-  | `industrial_get_state` | 读取当前状态（含生图/cad 检测、一致性聚合、summary） |
+  | `industrial_get_state` | 读取当前状态（含生图工具能力检测、cad 检测、一致性聚合、summary） |
 - **状态持久化**：项目状态存于 `$DSH_HOME/industrial-design/projects.json`（MVP 为单文件、非跨进程安全，后续版本迁到 sessionProjections/configEditor）。
 - **交互确认（硬校验 + 全量弹框）**：S0 冻结 Brief / S3 选方向 / S4 选方案 / S5 确认 DNA / S6 确认 CMF / S7 签收等关键决策点由状态机强制——`industrial_advance_stage` 前进时若未确认会返回 `blocked`，模型据此调 `ask_user_question` 弹框（推荐选项 + 自由输入）拿到答案后用 `industrial_confirm` 记录，方能放行。此外，**所有面向用户的提问（含 S0 Brief 采集的每一轮追问、S2 权重等）都通过 `ask_user_question` 弹框交互，不在正文里罗列问题**。
 - **双端可用**：本插件为 Host bundle，桌面端与网页版（Web GUI）均可使用；工具与状态存储在宿主运行时，与客户端形态无关。
 
-## 配置（v0.4.2）
+## 配置（v0.4.3）
 
 在「设置 → 插件 → industrial-design」里配置以下参数（填写即覆盖默认值；`industrial_get_state` 返回的 `config` 字段为当前生效值）：
 

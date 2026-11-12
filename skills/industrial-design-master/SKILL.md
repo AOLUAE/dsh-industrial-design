@@ -10,7 +10,7 @@ whenToUse: 用户发起工业设计或产品外观设计需求、要求按阶段
 
 ## 0. 使用方式（模型须知）
 
-- S7 视图渲染依赖「已配置的生图工具」（如 `generate_image` / `generate_images` / `edit_image`，可由 dsh-image-gen 或任意具备生图能力的插件提供）。进入 S7 前用 `industrial_get_state` 确认 `image_gen_available`；若为 false，明确告知用户「需先安装并配置一个生图插件」，不得编造或跳过出图步骤。
+- S7 视图渲染依赖「已配置的生图工具」（`generate_image` / `generate_images` / `edit_image`）。进入 S7 前用 `industrial_get_state` 读 `image_gen_available` 与 `image_capability.anchoring`：① 若无生图工具（available=false），明确告知用户「需先安装并配置一个生图插件」，不得编造或跳过出图；② 若能力判定为 `text_only`（只支持 prompt 裸文生图），告知用户「当前生图插件不支持几何锚定，需换用支持 ControlNet/参考图的条件控制插件」——S7 正交视图组禁止裸文生图。
 - 本流程配套 12 个 `industrial_*` 工具：`industrial_project_init` / `industrial_advance_stage` / `industrial_confirm` / `industrial_lock_variables` / `industrial_record_generation` / `industrial_record_consistency` / `industrial_compute_consistency` / `industrial_synthesize_research` / `industrial_record_dna` / `industrial_record_cmf` / `industrial_record_geometry` / `industrial_get_state`。各阶段用哪个见 §1 对应小节。
 - **所有面向用户的提问都必须用 `ask_user_question` 弹框，禁止把问题写在正文里**（例如在正文写「Q1 产品形态 A/B」让用户手动打字回答）。覆盖：S0 Brief 采集的每一轮追问、S2 评分权重、S3 方向、S4 方案、S5 DNA、S6 CMF、S7 签收，以及流程中任何需要用户二选一/多选/填空的交互。
 - 需要用户拍板的关键节点（冻结 Brief / 选定方向 / 选定方案 / 确认 DNA / 确认 CMF / 签收）由状态机硬校验，走「三步闭环」：① `industrial_advance_stage` 前进时若命中确认门禁会返回 `blocked`（含确认节点与问题）；② 据此调 `ask_user_question` 弹框拿到答案；③ 用 `industrial_confirm` 记录确认，再重新 `industrial_advance_stage` 放行。详见 §1「用户确认交互」。
@@ -79,7 +79,7 @@ whenToUse: 用户发起工业设计或产品外观设计需求、要求按阶段
 - MVP 裁剪：仅保留 CMF 规格书 + 基础 DFM 提示（L5 最小版四规则：拔模角/壁厚均匀/分模面/装配间隙），不产出三维粗模/人机校核/BOM。
 
 ### S7 视图与渲染交付
-- 前置条件：需「已配置的生图工具」（`generate_image` / `edit_image`，由 dsh-image-gen 或任意具备生图能力的插件提供）。进入前用 `industrial_get_state` 看 `image_gen_available`；为 false 则先告知用户安装并配置任一生图插件，再继续，禁止跳过出图。
+- 前置条件：需「已配置的生图工具」且**支持几何锚定**（`generate_image` 有 `workflow`/ControlNet，或 `edit_image` 有 `source`/`source_path` 参考图输入）。进入前用 `industrial_get_state` 读 `image_gen_available` 与 `image_capability.anchoring`；`text_only` 或 false 则先告知用户换用/安装支持条件控制（ControlNet/参考图）的生图插件，再继续，禁止裸文生图。
 - 生成管线（禁止一键文生图）：① 由几何骨架投出正交线稿（正/侧/背/俯 + 比例网格 + 关键尺寸）；② 以线稿或骨架作几何锚（Canny/Lineart/Depth 条件控制）锁定轮廓与体积；③ 构图与渲染解耦，AI 仅补材质/光影/环境，不改变结构；④ 同源生成透视图与场景渲染，共享同一 design_dna_id。
 - 几何锚定（每条 generation_record 必填）：`control_mode` 取 canny/lineart/depth（禁止 none）；`reference_image` 指向锚定线稿/骨架投影；`reference_strength`（几何锚强度）与 `adapter_strength`（IP-Adapter/MV-Adapter 一致性强度）按需给值。正交视图组（正/侧/背/俯）之间用 IP-Adapter/MV-Adapter 锁风格+身份一致。
 - 一致性校验清单：主特征线位置、总长宽高比例、分件线连续性、R 角、按键与接口数量及位置、LOGO 位、CMF 表现（逐项判定方式见 §4）。逐项用 `industrial_record_consistency` 记录（可带 view_group），完成后用 `industrial_compute_consistency` 聚合「特征级一致率/组级通过率」并与阈值比对判定 达标/不达标。
