@@ -7,3 +7,4 @@
         skeletonMatchThreshold: 0.85
         maxConvergenceRounds: 3
         categoryList: []
+        cadMCP: ''
