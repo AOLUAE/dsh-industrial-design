@@ -15,7 +15,7 @@ S7 的「视图与渲染交付」依赖**生图工具** `generate_image` / `edit
 
 ```bash
 # 示例：安装 dsh-image-gen（也可用任意具备生图能力的插件）
-pnpm dsh plugin --profile <profile> add dsh-image-gen
+dsh plugin --profile <profile> add dsh-image-gen
 ```
 
 安装后在「设置 → 插件」配置 provider（如 openai-compat 中转站）与 API Key。
@@ -58,20 +58,24 @@ pnpm dsh plugin --profile <profile> add dsh-image-gen
 
 ## 安装
 
-在 DeepSeek Harness 项目根目录：
+> ⚠️ 本插件**尚未发布到 npm**，请用下面任一方式安装。`dsh` 是 DeepSeek Harness 自带的命令行工具（位于安装目录 `resources/runtime/cli/bin/dsh.cmd`，通常已加入 PATH；若提示「找不到命令」，请用该完整路径调用）。
+
+### 方式一：GitHub 直装（推荐，无需 clone）
 
 ```bash
-pnpm dsh plugin --profile <profile> add dsh-industrial-design
+dsh plugin --profile <profile> add git+https://github.com/AOLUAE/dsh-industrial-design.git
 ```
 
-或本地目录 / GitHub 直装：
+### 方式二：clone 后本地目录安装
 
 ```bash
-pnpm dsh plugin --profile <profile> add ./dsh-industrial-design
-pnpm dsh plugin --profile <profile> add git+https://github.com/<you>/dsh-industrial-design.git
+git clone https://github.com/AOLUAE/dsh-industrial-design.git
+dsh plugin --profile <profile> add ./dsh-industrial-design
 ```
 
-安装后重启对应 Profile，技能 `industrial-design-master` 与 11 个工具即生效。
+把 `<profile>` 换成你的 profile 名（如 `desktop` / `web` / `tui`，即 `$DSH_HOME/profiles/` 下的目录名）。安装后重启对应 Profile，技能 `industrial-design-master` 与 11 个工具即生效。
+
+> 也可以在 DeepSeek Harness 图形界面的「设置 → 插件」里安装：粘贴上面的 `git+...` 地址，或选择 clone 下来的本地目录。
 
 ## 使用
 
