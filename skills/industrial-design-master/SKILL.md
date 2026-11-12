@@ -12,7 +12,8 @@ whenToUse: 用户发起工业设计或产品外观设计需求、要求按阶段
 
 - S7 视图渲染依赖「已配置的生图工具」（如 `generate_image` / `generate_images` / `edit_image`，可由 dsh-image-gen 或任意具备生图能力的插件提供）。进入 S7 前用 `industrial_get_state` 确认 `image_gen_available`；若为 false，明确告知用户「需先安装并配置一个生图插件」，不得编造或跳过出图步骤。
 - 本流程配套 12 个 `industrial_*` 工具：`industrial_project_init` / `industrial_advance_stage` / `industrial_confirm` / `industrial_lock_variables` / `industrial_record_generation` / `industrial_record_consistency` / `industrial_compute_consistency` / `industrial_synthesize_research` / `industrial_record_dna` / `industrial_record_cmf` / `industrial_record_geometry` / `industrial_get_state`。各阶段用哪个见 §1 对应小节。
-- 需要用户拍板时（冻结 Brief / 选定方向 / 选定方案 / 确认 DNA / 确认 CMF / 签收），走「交互确认」三步闭环：① `industrial_advance_stage` 前进时若命中确认门禁会返回 `blocked`（含确认节点与问题）；② 据此调 `ask_user_question` 弹框拿到答案；③ 用 `industrial_confirm` 记录确认，再重新 `industrial_advance_stage` 放行。详见 §1「用户确认交互」。
+- **所有面向用户的提问都必须用 `ask_user_question` 弹框，禁止把问题写在正文里**（例如在正文写「Q1 产品形态 A/B」让用户手动打字回答）。覆盖：S0 Brief 采集的每一轮追问、S2 评分权重、S3 方向、S4 方案、S5 DNA、S6 CMF、S7 签收，以及流程中任何需要用户二选一/多选/填空的交互。
+- 需要用户拍板的关键节点（冻结 Brief / 选定方向 / 选定方案 / 确认 DNA / 确认 CMF / 签收）由状态机硬校验，走「三步闭环」：① `industrial_advance_stage` 前进时若命中确认门禁会返回 `blocked`（含确认节点与问题）；② 据此调 `ask_user_question` 弹框拿到答案；③ 用 `industrial_confirm` 记录确认，再重新 `industrial_advance_stage` 放行。详见 §1「用户确认交互」。
 - 每阶段进入前先检查「准入门禁」；不满足则回流上一阶段补齐。
 - 每阶段离开前必须通过「准出门禁」；不通过则在该阶段内迭代。
 - 关键图像生成必须写 generation_record（见 §8 与 `templates/generation_record.md`）。
@@ -25,7 +26,7 @@ whenToUse: 用户发起工业设计或产品外观设计需求、要求按阶段
 
 ### S0 项目立项与 Brief 采集
 - 目标：把模糊需求收敛为可冻结 Brief。
-- 动作：分 3–4 轮渐进追问，每轮 ≤3 问；发现 Brief 内部矛盾主动提反例（如「目标用户与售价区间不匹配」）。
+- 动作：分 3–4 轮渐进追问，每轮 ≤3 问；发现 Brief 内部矛盾主动提反例（如「目标用户与售价区间不匹配」）。**每轮追问必须用 `ask_user_question` 弹框**：把 ≤3 个问题放进 `questions` 数组，每题给 `options`（推荐项放首并标「（推荐）」，体型/多选用 `multi_select`），拿到的答案作为本字段的值；禁止把问题写在正文里让用户打字回答。
 - 必采字段：品类声明（category_id，随 Brief 冻结锁定）、核心功能、目标用户与场景、售价与成本上限、预估量产规模、材料与工艺偏好及禁用项、模具预算、安规认证、品牌 DNA 或竞品参照、尺寸与人机边界、项目节点、内部堆叠约束。
 - 品类画像：声明后生成复杂度画像（壳体数/分件数/透明件/曲面复杂度/包覆件/典型工艺），据此加载校验特征项、案例子集与工艺规则子集。
 - 产出：Design Brief v1.0（含不可协商约束清单）。
@@ -40,7 +41,7 @@ whenToUse: 用户发起工业设计或产品外观设计需求、要求按阶段
 - 准出门禁：≥5 条事实级洞察，且用户确认无重大遗漏。
 
 ### S2 问题定义
-- 动作：把洞察收敛为 2–3 个设计机会点；建立加权评分维度（用户价值/品牌契合/创新性/成本可控/可量产性/体验差异），权重由用户确认。
+- 动作：把洞察收敛为 2–3 个设计机会点；建立加权评分维度（用户价值/品牌契合/创新性/成本可控/可量产性/体验差异），权重用 `ask_user_question` 弹框由用户确认（每个维度给权重选项，或 `multi_select` 选保留哪些维度）。
 - 产出：Design Brief v1.1（补机会点与评分维度）。
 - 准出门禁：机会点与 Brief 硬约束无冲突。
 
@@ -203,6 +204,7 @@ whenToUse: 用户发起工业设计或产品外观设计需求、要求按阶段
 
 ## 9. 红线（禁止事项）
 
+- 禁止用纯文本罗列问题让用户回答——S0 采集、S2 权重、S3 方向、S4 方案、S5 DNA、S6 CMF、S7 签收等一切面向用户的提问，一律用 `ask_user_question` 弹框。
 - 禁止纯文生图直接产出正交视图组。
 - 禁止正/侧/背各自独立采样后靠提示词「看起来像」。
 - 禁止在渲染阶段修改轮廓、分件线或特征线位置。

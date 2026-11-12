@@ -1,6 +1,6 @@
 # dsh-industrial-design
 
-工业设计大师 · S0–S7 状态机插件（v0.4.1）
+工业设计大师 · S0–S7 状态机插件（v0.4.2）
 
 把一次工业设计需求从 Brief 冻结（S0）逐步推进到正交视图组交付（S7）的 **状态编排器**。它内置了「工业设计大师」认知层技能，并提供 12 个工具用于项目状态、交互确认门禁、变量锁定、生成复现、调研洞察、DNA/CMF/几何归档与一致性校验（含机器判定器打分）。
 
@@ -39,10 +39,10 @@ dsh plugin --profile <profile> add dsh-image-gen
   | `industrial_record_geometry` | S5.5/S6 记录几何骨架/STEP/IGES/OBJ 导出 |
   | `industrial_get_state` | 读取当前状态（含生图/cad 检测、一致性聚合、summary） |
 - **状态持久化**：项目状态存于 `$DSH_HOME/industrial-design/projects.json`（MVP 为单文件、非跨进程安全，后续版本迁到 sessionProjections/configEditor）。
-- **交互确认（硬校验）**：S0 冻结 Brief / S3 选方向 / S4 选方案 / S5 确认 DNA / S6 确认 CMF / S7 签收等关键决策点由状态机强制——`industrial_advance_stage` 前进时若未确认会返回 `blocked`，模型据此调 `ask_user_question` 弹框（推荐选项 + 自由输入）拿到答案后用 `industrial_confirm` 记录，方能放行。
+- **交互确认（硬校验 + 全量弹框）**：S0 冻结 Brief / S3 选方向 / S4 选方案 / S5 确认 DNA / S6 确认 CMF / S7 签收等关键决策点由状态机强制——`industrial_advance_stage` 前进时若未确认会返回 `blocked`，模型据此调 `ask_user_question` 弹框（推荐选项 + 自由输入）拿到答案后用 `industrial_confirm` 记录，方能放行。此外，**所有面向用户的提问（含 S0 Brief 采集的每一轮追问、S2 权重等）都通过 `ask_user_question` 弹框交互，不在正文里罗列问题**。
 - **双端可用**：本插件为 Host bundle，桌面端与网页版（Web GUI）均可使用；工具与状态存储在宿主运行时，与客户端形态无关。
 
-## 配置（v0.4.1）
+## 配置（v0.4.2）
 
 在「设置 → 插件 → industrial-design」里配置以下参数（填写即覆盖默认值；`industrial_get_state` 返回的 `config` 字段为当前生效值）：
 
