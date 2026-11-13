@@ -59,15 +59,21 @@ dsh plugin --profile <profile> add dsh-image-gen
 
 ## 安装
 
-> ⚠️ 本插件**尚未发布到 npm**，请用下面任一方式安装。`dsh` 是 DeepSeek Harness 自带的命令行工具（位于安装目录 `resources/runtime/cli/bin/dsh.cmd`，通常已加入 PATH；若提示「找不到命令」，请用该完整路径调用）。
+`dsh` 是 DeepSeek Harness 自带的命令行工具（位于安装目录 `resources/runtime/cli/bin/dsh.cmd`，通常已加入 PATH；若提示「找不到命令」，请用该完整路径调用）。
 
-### 方式一：GitHub 直装（推荐，无需 clone）
+### 方式一：npm 安装（推荐）
+
+```bash
+dsh plugin --profile <profile> add dsh-industrial-design
+```
+
+### 方式二：GitHub 直装（npm 源不通时）
 
 ```bash
 dsh plugin --profile <profile> add git+https://github.com/AOLUAE/dsh-industrial-design.git
 ```
 
-### 方式二：clone 后本地目录安装
+### 方式三：clone 后本地目录安装（无网络时）
 
 ```bash
 git clone https://github.com/AOLUAE/dsh-industrial-design.git
@@ -76,7 +82,7 @@ dsh plugin --profile <profile> add ./dsh-industrial-design
 
 把 `<profile>` 换成你的 profile 名（如 `desktop` / `web` / `tui`，即 `$DSH_HOME/profiles/` 下的目录名）。安装后重启对应 Profile，技能 `industrial-design-master` 与 12 个工具即生效。
 
-> 也可以在 DeepSeek Harness 图形界面的「设置 → 插件」里安装：粘贴上面的 `git+...` 地址，或选择 clone 下来的本地目录。
+> 也可以在 DeepSeek Harness 图形界面的「设置 → 插件」里安装：粘贴 `dsh-industrial-design`（npm）或 `git+...` 地址，或选择 clone 下来的本地目录。
 
 ## 使用
 
