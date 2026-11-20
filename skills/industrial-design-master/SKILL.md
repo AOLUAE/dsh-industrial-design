@@ -13,7 +13,7 @@ whenToUse: 用户发起工业设计或产品外观设计需求、要求按阶段
 - S7 视图渲染依赖「已配置的生图工具」（`generate_image` / `generate_images` / `edit_image`）。进入 S7 前用 `industrial_get_state` 读 `image_gen_available` 与 `image_capability.anchoring`：① 若无生图工具（available=false），明确告知用户「需先安装并配置一个生图插件」，不得编造或跳过出图；② 若能力判定为 `text_only`（只支持 prompt 裸文生图），告知用户「当前生图插件不支持几何锚定，需换用支持 ControlNet/参考图的条件控制插件」——S7 正交视图组禁止裸文生图。
 - 本流程配套 12 个 `industrial_*` 工具：`industrial_project_init` / `industrial_advance_stage` / `industrial_confirm` / `industrial_lock_variables` / `industrial_record_generation` / `industrial_record_consistency` / `industrial_compute_consistency` / `industrial_synthesize_research` / `industrial_record_dna` / `industrial_record_cmf` / `industrial_record_geometry` / `industrial_get_state`。各阶段用哪个见 §1 对应小节。
 - **所有面向用户的提问都必须用 `ask_user_question` 弹框，禁止把问题写在正文里**（例如在正文写「Q1 产品形态 A/B」让用户手动打字回答）。覆盖：S0 Brief 采集的每一轮追问、S2 评分权重、S3 方向、S4 方案、S5 DNA、S6 CMF、S7 签收，以及流程中任何需要用户二选一/多选/填空的交互。
-- 需要用户拍板的关键节点（冻结 Brief / 选定方向 / 选定方案 / 确认 DNA / 确认 CMF / 签收）由状态机硬校验，走「三步闭环」：① `industrial_advance_stage` 前进时若命中确认门禁会返回 `blocked`（含确认节点与问题）；② 据此调 `ask_user_question` 弹框拿到答案；③ 用 `industrial_confirm` 记录确认，再重新 `industrial_advance_stage` 放行。详见 §1「用户确认交互」。
+- 需要用户拍板的关键节点（冻结 Brief / 选定方向 / 选定方案 / 确认 DNA / 确认 CMF / 签收）由状态机硬校验，走「三步闭环」：① `industrial_advance_stage` 前进时若命中确认门禁会返回 `blocked`（含确认节点与问题）；② 据此调 `ask_user_question` 弹框拿到答案；③ 用 `industrial_confirm` 记录**结构化决定**（decision=confirm/defer/reject，只有 confirm 放行），再重新 `industrial_advance_stage`。详见 §1「用户确认交互」。
 - 每阶段进入前先检查「准入门禁」；不满足则回流上一阶段补齐。
 - 每阶段离开前必须通过「准出门禁」；不通过则在该阶段内迭代。
 - 关键图像生成必须写 generation_record（见 §8 与 `templates/generation_record.md`）。
@@ -38,7 +38,7 @@ whenToUse: 用户发起工业设计或产品外观设计需求、要求按阶段
 - 标注规则：每条结论标记「事实（带来源）/推断/待验证」；无来源结论不得作为方向推导依据。
 - 归档：用 `industrial_synthesize_research` 把洞察清单结构化归档（每条含 id/statement/source/type），工具会返回事实级洞察数与准出门禁提示。
 - 产出：调研报告、竞品矩阵、洞察清单（编号 I-01…）、用户旅程图。
-- 准出门禁：≥5 条事实级洞察，且用户确认无重大遗漏。
+- 准出门禁（`industrial_advance_stage` 硬校验）：≥5 条事实级洞察（不足时 advance_stage 返回 blocked，须继续补齐），且用户确认无重大遗漏。
 
 ### S2 问题定义
 - 动作：把洞察收敛为 2–3 个设计机会点；建立加权评分维度（用户价值/品牌契合/创新性/成本可控/可量产性/体验差异），权重用 `ask_user_question` 弹框由用户确认（每个维度给权重选项，或 `multi_select` 选保留哪些维度）。
@@ -66,7 +66,7 @@ whenToUse: 用户发起工业设计或产品外观设计需求、要求按阶段
 ### S5.5 轻量几何骨架（MVP）
 - 动作：由 S5 锚定线稿重建可投影的粗几何。表示形式（参数化图元/体素/单目 3D 重建）由技术负责人选定并记录；不产出可编辑参数化模型。
 - 归档：用 `industrial_record_geometry` 记录骨架导出（format=STEP/IGES/OBJ/3DM 或 image 降级、file_path、source=skeleton/cad_mcp/manual、skeleton_match 吻合度）。
-- 准出门禁：骨架投影线稿与锚定线稿关键特征线吻合度 ≥ 阈值（默认 0.85，可经插件配置 skeletonMatchThreshold 调整；关键点误差/投影 IoU，阈值随品类画像取值）；未达标回流 S5 修正锚定线稿，不得带病进入 S7。
+- 准出门禁（`industrial_advance_stage` 硬校验）：骨架投影线稿与锚定线稿关键特征线吻合度 ≥ 阈值（默认 0.85，可经插件配置 skeletonMatchThreshold 调整）；未达标 advance_stage 返回 blocked，须回流 S5 修正锚定线稿并重新 `industrial_record_geometry` 记录吻合度，不得带病进入 S6/S7。
 - 产出：轻量几何骨架（含投影参数 + 吻合度报告）。
 - 作用：作为 S7 正交投影输入，消除「由骨架投影」的悬空。
 
@@ -84,11 +84,11 @@ whenToUse: 用户发起工业设计或产品外观设计需求、要求按阶段
 - 几何锚定（每条 generation_record 必填）：`control_mode` 取 canny/lineart/depth（禁止 none）；`reference_image` 指向锚定线稿/骨架投影；`reference_strength`（几何锚强度）与 `adapter_strength`（IP-Adapter/MV-Adapter 一致性强度）按需给值。正交视图组（正/侧/背/俯）之间用 IP-Adapter/MV-Adapter 锁风格+身份一致。
 - 一致性校验清单：主特征线位置、总长宽高比例、分件线连续性、R 角、按键与接口数量及位置、LOGO 位、CMF 表现（逐项判定方式见 §4）。逐项用 `industrial_record_consistency` 记录（可带 view_group），完成后用 `industrial_compute_consistency` 聚合「特征级一致率/组级通过率」并与阈值比对判定 达标/不达标。
 - 产出：正交视图组（正/侧/背/俯带尺寸）、透视图与场景渲染、设计说明、决策记录、CMF 表、版本快照、交付清单。
-- 准出门禁：一致性校验通过 + 用户签收。
+- 准出门禁：一致性校验通过（`industrial_compute_consistency` 判 达标）+ 用户签收。签收（`industrial_confirm` node=signed_off 且 decision=confirm）前状态机会校验必需交付物——正交视图组四视图（front/side/back/top 的 generation_record）、一致性校验记录、Design DNA、几何导出，缺项会被拒并点名。
 
 ### 用户确认交互（交互确认门禁，代码硬校验）
 
-所有需要用户拍板的关键节点，由**状态机硬校验**：`industrial_advance_stage` 前进时若当前阶段属于确认门禁（见下表）且尚未记录确认，会返回 `blocked`（含 `requires_confirmation` / `confirmation_label` / `confirmation_question`），此时**不推进、不改状态**。
+所有需要用户拍板的关键节点，由**状态机硬校验**：`industrial_advance_stage` 前进时若当前阶段属于确认门禁（见下表）且尚未以 decision=confirm 记录，会返回 `blocked`（含 `requires_confirmation` / `confirmation_label` / `confirmation_question`），此时**不推进、不改状态**。`industrial_confirm` 必须给结构化 `decision`：confirm=同意放行；defer=暂缓（留本阶段+待核对）；reject=退回（留本阶段+改方向/方案）。defer/reject 不算已确认。
 
 | 离开阶段 | 确认节点(node) | 提问底稿（按实际项目补 options） |
 | --- | --- | --- |
@@ -103,11 +103,11 @@ whenToUse: 用户发起工业设计或产品外观设计需求、要求按阶段
 三步闭环（缺一不可）：
 1. 调 `industrial_advance_stage`；若返回 `blocked`，说明命中确认门禁。
 2. 调 `ask_user_question` 弹框：`question` 用上表底稿，`options` 用本项目实际的方向/方案/选项（推荐项放首并标「（推荐）」；方向混合等用 `multi_select`；该工具自带「自由输入」通道）。
-3. 拿到用户答案后，调 `industrial_confirm`（project_id + node + choice）记录，再重新 `industrial_advance_stage` 即可放行。
+3. 拿到用户答案后，调 `industrial_confirm`（project_id + node + **decision** + choice，choice 存用户原话、decision 存结构化决定）记录；只有 decision=confirm 再重新 `industrial_advance_stage` 才会放行，defer/reject 会继续 blocked。
 
-- 用户跳过（无选择且无 custom）时，不要重复追问，`industrial_confirm` 的 `choice` 记「未指定」，后续按「未指定 + 待验证」继续并在决策记录中标注。
+- 用户跳过（无选择且无 custom）时，不要重复追问，`industrial_confirm` 记 decision=defer、choice=「未指定」，后续按「未指定 + 待验证」继续并在决策记录中标注。
 - 回流会自动清掉回流目标阶段及其之后的确认记录，重新推进时须重新确认。
-- S7 的 `signed_off` 是终点签收：`industrial_get_state` 在 S7 未签收时 `pending_confirmation` 会给出 signed_off，按同样闭环用 `industrial_confirm` 记录签收。
+- S7 的 `signed_off` 是终点签收：`industrial_get_state` 在 S7 未签收时 `pending_confirmation` 会给出 signed_off，按同样闭环用 `industrial_confirm` 记录签收。签收前状态机会校验必需交付物（正交四视图/一致性记录/DNA/几何），缺项会返回 blocked + missing_deliverables，补齐后才能签收。
 
 ## 2. 品类动态锁定 category_id
 
@@ -148,7 +148,7 @@ whenToUse: 用户发起工业设计或产品外观设计需求、要求按阶段
 
 - 机器判定器上线前须用 golden set 抽 10 组做「机器 vs 人评」对齐，判定一致率 ≥90%（默认，可经插件配置 consistencyThreshold 调整）方可启用；周期内复校。
 - 除组级二值外，记录「特征级一致率」= 通过的特征项数 / 抽检总特征项数（观察项，分辨系统性漂移 vs 偶发失误）。
-- 量化落地：全部逐项记录完成后调用 `industrial_compute_consistency`，它聚合出 feature_consistency_rate（特征级一致率）与 group_pass_rate（组级通过率，需逐项带 view_group），与 consistencyThreshold 比对给出 达标/不达标 判定。
+- 量化落地：全部逐项记录完成后调用 `industrial_compute_consistency`，它先按 (view_group, item) 去重（同一项只取最新一次判定，避免「先失败后通过」累加），再聚合 feature_consistency_rate（特征级一致率）与 group_pass_rate（组级通过率，需逐项带 view_group），与 consistencyThreshold 比对：**达标 = 特征级一致率 ≥ 阈值 且 组级通过率 ≥ 阈值**（存在失败视图组即不达标，关键项失败不被普通项抵消）。无记录 = 无数据。
 
 ## 5. 触顶失败收敛（10.3）
 

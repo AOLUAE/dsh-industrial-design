@@ -1,6 +1,6 @@
 # dsh-industrial-design
 
-工业设计大师 · S0–S7 状态机插件（v0.4.3）
+工业设计大师 · S0–S7 状态机插件（v0.5.0）
 
 把一次工业设计需求从 Brief 冻结（S0）逐步推进到正交视图组交付（S7）的 **状态编排器**。它内置了「工业设计大师」认知层技能，并提供 12 个工具用于项目状态、交互确认门禁、变量锁定、生成复现、调研洞察、DNA/CMF/几何归档与一致性校验（含机器判定器打分）。
 
@@ -27,22 +27,22 @@ dsh plugin --profile <profile> add dsh-image-gen
   | 工具 | 作用 |
   | --- | --- |
   | `industrial_project_init` | S0 立项，冻结 Brief（category_id 必填，可白名单校验） |
-  | `industrial_advance_stage` | 阶段推进 / 回流（前进不跳级，回流需理由；前进硬校验交互确认门禁，未确认返回 blocked） |
-  | `industrial_confirm` | 记录用户在各确认节点的拍板结果（advance_stage 放行前须先经 ask_user_question 问询并记录） |
+  | `industrial_advance_stage` | 阶段推进 / 回流（前进不跳级，回流需理由；前进硬校验确认门禁 + S1 事实数 ≥5 + S5.5 骨架吻合度 ≥ 阈值，未达标返回 blocked） |
+  | `industrial_confirm` | 记录用户拍板（decision=confirm/defer/reject 三态 + choice 原话；signed_off 签收前校验必需交付物） |
   | `industrial_lock_variables` | 记录变量锁定矩阵 |
   | `industrial_record_generation` | 写 generation_record（含 view/control_mode/参考图/锚强度，可复现） |
   | `industrial_record_consistency` | 记录 10.2 逐项判定（机器/人工/混合，可带 view_group） |
-  | `industrial_compute_consistency` | 机器判定器：聚合特征级一致率/组级通过率并与阈值比对 |
+  | `industrial_compute_consistency` | 机器判定器：按 (view_group,item) 去重后聚合特征级一致率/组级通过率，达标=两者都过阈值 |
   | `industrial_synthesize_research` | S1 归档调研洞察（fact/inference/tbd 三态标注） |
   | `industrial_record_dna` | S5 记录设计 DNA（自动生成 design_dna_id） |
   | `industrial_record_cmf` | S6 记录 CMF 规格书 |
   | `industrial_record_geometry` | S5.5/S6 记录几何骨架/STEP/IGES/OBJ 导出 |
   | `industrial_get_state` | 读取当前状态（含生图工具能力检测、cad 检测、一致性聚合、summary） |
 - **状态持久化**：项目状态存于 `$DSH_HOME/industrial-design/projects.json`（MVP 为单文件、非跨进程安全，后续版本迁到 sessionProjections/configEditor）。
-- **交互确认（硬校验 + 全量弹框）**：S0 冻结 Brief / S3 选方向 / S4 选方案 / S5 确认 DNA / S6 确认 CMF / S7 签收等关键决策点由状态机强制——`industrial_advance_stage` 前进时若未确认会返回 `blocked`，模型据此调 `ask_user_question` 弹框（推荐选项 + 自由输入）拿到答案后用 `industrial_confirm` 记录，方能放行。此外，**所有面向用户的提问（含 S0 Brief 采集的每一轮追问、S2 权重等）都通过 `ask_user_question` 弹框交互，不在正文里罗列问题**。
+- **交互确认（硬校验 + 全量弹框 + 三态决定）**：S0 冻结 Brief / S3 选方向 / S4 选方案 / S5 确认 DNA / S6 确认 CMF / S7 签收等关键决策点由状态机强制——`industrial_advance_stage` 前进时若未以 decision=confirm 确认会返回 `blocked`，模型据此调 `ask_user_question` 弹框（推荐选项 + 自由输入）拿到答案后用 `industrial_confirm`（decision + choice 原话）记录；只有 confirm 放行，defer/reject 留本阶段继续 blocked。S7 签收前还会校验必需交付物（正交四视图/一致性记录/DNA/几何），缺项被拒并点名。此外，**所有面向用户的提问（含 S0 Brief 采集的每一轮追问、S2 权重等）都通过 `ask_user_question` 弹框交互，不在正文里罗列问题**。
 - **双端可用**：本插件为 Host bundle，桌面端与网页版（Web GUI）均可使用；工具与状态存储在宿主运行时，与客户端形态无关。
 
-## 配置（v0.4.3）
+## 配置（v0.5.0）
 
 在「设置 → 插件 → industrial-design」里配置以下参数（填写即覆盖默认值；`industrial_get_state` 返回的 `config` 字段为当前生效值）：
 

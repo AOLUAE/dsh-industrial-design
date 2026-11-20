@@ -129,6 +129,49 @@ const CONFIRM_GATES = {
 
 const CONFIRM_NODES = Object.values(CONFIRM_GATES).map((g) => g.key)
 
+// S1 硬门禁：事实级洞察最低条数（与 synthesize_research 的 gate_hint 一致）。
+const MIN_RESEARCH_FACTS = 5
+// S7 签收必需的正交视图组（正/侧/背/俯）。
+const REQUIRED_VIEWS = [
+  { view: 'front', label: '正视图' },
+  { view: 'side', label: '侧视图' },
+  { view: 'back', label: '背视图' },
+  { view: 'top', label: '俯视图' }
+]
+
+// 一致性聚合（去重 + 特征级 + 组级），供 industrial_compute_consistency 与签收校验复用。
+function computeConsistency(p, threshold) {
+  const raw = p.consistency || []
+  const latestMap = new Map()
+  for (const r of raw) {
+    const key = `${r.view_group || ''}\u0000${r.item}`
+    const prev = latestMap.get(key)
+    if (!prev || (r.at || 0) >= (prev.at || 0)) latestMap.set(key, r)
+  }
+  const items = [...latestMap.values()]
+  const total = items.length
+  const passed = items.filter((r) => r.verdict === 'pass').length
+  const rate = total > 0 ? passed / total : 0
+  const breakdown = {}
+  for (const r of items) {
+    breakdown[r.item] = breakdown[r.item] || { pass: 0, fail: 0, judge: r.judge_type, view_group: r.view_group || '' }
+    breakdown[r.item][r.verdict === 'pass' ? 'pass' : 'fail'] += 1
+  }
+  const groups = {}
+  for (const r of items) {
+    if (!r.view_group) continue
+    groups[r.view_group] = groups[r.view_group] || []
+    groups[r.view_group].push(r)
+  }
+  const groupNames = Object.keys(groups)
+  const passedGroups = groupNames.filter((g) => groups[g].every((r) => r.verdict === 'pass')).length
+  const groupRate = groupNames.length > 0 ? passedGroups / groupNames.length : null
+  const featureOk = rate >= threshold
+  const groupOk = groupRate === null || groupRate >= threshold
+  const verdict = total === 0 ? '无数据' : featureOk && groupOk ? '达标' : '不达标'
+  return { items, total, passed, rate, breakdown, groupNames, passedGroups, groupRate, featureOk, groupOk, verdict }
+}
+
 function confirmKeysAtOrAfter(stage) {
   const idx = STAGES.indexOf(stage)
   const keys = []
@@ -213,7 +256,8 @@ function makeProjectInit(getCfg) {
   }
 }
 
-const advanceStage = {
+function makeAdvanceStage(getCfg) {
+  return {
   name: 'industrial_advance_stage',
   description:
     '推进设计阶段（S0→S1→…→S7）。默认前进一格；可显式回流到较早阶段（须给 reason）。前进不可跳级。前进时硬校验交互确认门禁：若当前阶段需用户确认且未记录，返回 blocked（须先 ask_user_question → industrial_confirm 再推进）。',
@@ -247,7 +291,8 @@ const advanceStage = {
     // 前进：先校验「交互确认」门禁——离开当前阶段前必须已记录用户确认，否则 block（不推进、不改状态）。
     if (isForward) {
       const gate = CONFIRM_GATES[p.stage]
-      if (gate && !(p.confirmations && p.confirmations[gate.key])) {
+      const gateConfirmed = p.confirmations && p.confirmations[gate.key] && p.confirmations[gate.key].decision === 'confirm'
+      if (gate && !gateConfirmed) {
         return {
           blocked: true,
           stage: p.stage,
@@ -266,6 +311,40 @@ const advanceStage = {
       }
     }
 
+    // 前进：校验「硬门禁」（机器可判，资料不足即 block）。
+    if (isForward) {
+      if (p.stage === 'S1') {
+        const facts = (p.research || []).filter((r) => r.type === 'fact').length
+        if (facts < MIN_RESEARCH_FACTS) {
+          return {
+            blocked: true,
+            stage: p.stage,
+            next_stage: STAGES[targetIdx],
+            gate: 's1_facts',
+            gate_label: `S1 事实级洞察 ≥${MIN_RESEARCH_FACTS}`,
+            detail: `当前 ${facts} 条事实级洞察，需 ≥${MIN_RESEARCH_FACTS} 条。用 industrial_synthesize_research 补齐后再推进。`
+          }
+        }
+      }
+      if (p.stage === 'S5.5') {
+        const geom = [...(p.geometry || [])].sort((a, b) => (b.at || 0) - (a.at || 0))[0]
+        const match = geom && typeof geom.skeleton_match === 'number' ? geom.skeleton_match : null
+        const thr = getCfg().skeletonMatchThreshold
+        if (match === null || match < thr) {
+          return {
+            blocked: true,
+            stage: p.stage,
+            next_stage: STAGES[targetIdx],
+            gate: 's5_5_skeleton',
+            gate_label: `S5.5 骨架吻合度 ≥${Math.round(thr * 100)}%`,
+            detail: match === null
+              ? '尚无骨架吻合度记录：用 industrial_record_geometry 记录 skeleton_match 后重试。'
+              : `当前骨架吻合度 ${(match * 100).toFixed(1)}% < 阈值 ${(thr * 100).toFixed(0)}%，需回流修正骨架。`
+          }
+        }
+      }
+    }
+
     if (curIdx === 0 && targetIdx === 1 && !p.categoryId) {
       throw new Error('S0 准出需要 category_id（品类未声明）。用 industrial_project_init 声明品类后再推进。')
     }
@@ -275,7 +354,8 @@ const advanceStage = {
     p.updatedAt = Date.now()
     p.changelog.push({ at: Date.now(), from, to: p.stage, reason: args.reason || (isForward ? 'advance' : 'reflow') })
     saveStore(store)
-    return { ...p, gate_hint: GATES[p.stage] || '', confirmed_gates: Object.keys(p.confirmations || {}) }
+    return { ...p, gate_hint: GATES[p.stage] || '', confirmed_gates: Object.keys(p.confirmations || {}).filter((k) => p.confirmations[k] && p.confirmations[k].decision === 'confirm') }
+  }
   }
 }
 
@@ -571,39 +651,74 @@ const recordGeometry = {
   }
 }
 
-const recordConfirm = {
+function makeRecordConfirm(getCfg) {
+  const requiredDeliverables = (p) => {
+    const missing = []
+    const views = new Set((p.generations || []).map((g) => g.view))
+    for (const { view, label } of REQUIRED_VIEWS) {
+      if (!views.has(view)) missing.push(`缺${label}（industrial_record_generation view=${view}）`)
+    }
+    if (!(p.consistency || []).length) missing.push('无一致性校验记录（industrial_record_consistency）')
+    if (!p.designDnaId) missing.push('未冻结 Design DNA（industrial_record_dna）')
+    if (!(p.geometry || []).length) missing.push('无几何导出（industrial_record_geometry，无 CAD 能力时可 format=image 降级）')
+    return missing
+  }
+  return {
   name: 'industrial_confirm',
   description:
-    '记录用户在关键决策点的确认结果（交互确认门禁）。模型必须先调 ask_user_question 拿到用户答案，再用本工具记录；industrial_advance_stage 会硬校验对应阶段是否已确认，未确认无法推进。S7 签收通过 node=signed_off 记录。',
+    '记录用户在关键决策点的确认结果（交互确认门禁）。模型必须先调 ask_user_question 拿到用户答案，再用本工具记录；industrial_advance_stage 只认 decision=confirm 为「已确认」。decision=defer（暂缓）/reject（退回）不推进。S7 签收（node=signed_off 且 decision=confirm）前会校验必需交付物（正交视图组/一致性/DNA/几何）。',
   parameters: {
     type: 'object',
     properties: {
       project_id: { type: 'string', description: '项目 ID' },
       node: { type: 'string', enum: CONFIRM_NODES, description: '确认节点：brief_frozen=冻结Brief / insights_confirmed=确认洞察 / direction_selected=选定方向 / concept_selected=选定方案 / dna_confirmed=确认DNA / cmf_confirmed=确认CMF / signed_off=签收' },
-      choice: { type: 'string', description: '用户的选择/答案（如「冻结，进入调研」「方向A」）' },
+      decision: { type: 'string', enum: ['confirm', 'defer', 'reject'], description: '结构化决定：confirm=同意（放行）/ defer=暂缓（留本阶段+待核对）/ reject=退回（留本阶段+改方向或方案）。只有 confirm 才算「已确认」。' },
+      choice: { type: 'string', description: '用户原话（如「暂不冻结，还需核对收纳尺寸」）。保留原始表述，推进判定以 decision 为准。' },
       note: { type: 'string', description: '备注' }
     },
-    required: ['project_id', 'node', 'choice']
+    required: ['project_id', 'node', 'decision']
   },
   output: OUTPUT,
   async execute(args) {
     const store = loadStore()
     const p = mustProject(store, args.project_id)
+
+    // S7 签收前校验必需交付物（decision=confirm 时）。
+    if (args.node === 'signed_off' && args.decision === 'confirm') {
+      const missing = requiredDeliverables(p)
+      if (missing.length > 0) {
+        return {
+          blocked: true,
+          stage: p.stage,
+          node: args.node,
+          decision: args.decision,
+          requires_deliverables: true,
+          missing_deliverables: missing,
+          instruction: '签收被拒：交付物不齐。补齐下列缺失项后重新签收（用 industrial_get_state 核对 summary / confirmations）。'
+        }
+      }
+    }
+
     p.confirmations = p.confirmations || {}
-    p.confirmations[args.node] = { choice: args.choice, note: args.note || '', at: Date.now(), timestamp: new Date().toISOString() }
+    p.confirmations[args.node] = { decision: args.decision, choice: args.choice || '', note: args.note || '', at: Date.now(), timestamp: new Date().toISOString() }
     p.updatedAt = Date.now()
-    p.changelog.push({ at: Date.now(), kind: 'confirm', node: args.node, choice: args.choice })
+    p.changelog.push({ at: Date.now(), kind: 'confirm', node: args.node, decision: args.decision, choice: args.choice || '' })
     saveStore(store)
-    const remaining = CONFIRM_NODES.filter((n) => !p.confirmations[n])
+    const confirmed = CONFIRM_NODES.filter((n) => p.confirmations[n] && p.confirmations[n].decision === 'confirm')
+    const remaining = CONFIRM_NODES.filter((n) => !confirmed.includes(n))
     return {
       project_id: p.projectId,
       stage: p.stage,
       node: args.node,
-      choice: args.choice,
-      confirmed: Object.keys(p.confirmations),
+      decision: args.decision,
+      choice: args.choice || '',
+      confirmed,
       remaining_unconfirmed: remaining,
-      hint: remaining.length > 0 ? `剩余待确认节点：${remaining.join(' / ')}（按阶段推进时逐个确认）。` : '全部确认节点已完成。'
+      hint: args.decision === 'confirm'
+        ? (remaining.length > 0 ? `已确认 ${args.node}。剩余待确认节点：${remaining.join(' / ')}。` : '全部确认节点已完成。')
+        : `已记录「${args.decision}」（${args.node}），未放行：需重新确认（decision=confirm）才能推进。`
     }
+  }
   }
 }
 
@@ -623,45 +738,30 @@ function makeComputeConsistency(getCfg) {
     async execute(args) {
       const store = loadStore()
       const p = mustProject(store, args.project_id)
-      const items = p.consistency || []
-      const total = items.length
-      const passed = items.filter((r) => r.verdict === 'pass').length
-      const rate = total > 0 ? passed / total : 0
       const threshold = getCfg().consistencyThreshold
-
-      const breakdown = {}
-      for (const r of items) {
-        breakdown[r.item] = breakdown[r.item] || { pass: 0, fail: 0, judge: r.judge_type }
-        breakdown[r.item][r.verdict === 'pass' ? 'pass' : 'fail'] += 1
-      }
-
-      const groups = {}
-      for (const r of items) {
-        if (!r.view_group) continue
-        groups[r.view_group] = groups[r.view_group] || []
-        groups[r.view_group].push(r)
-      }
-      const groupNames = Object.keys(groups)
-      const passedGroups = groupNames.filter((g) => groups[g].every((r) => r.verdict === 'pass')).length
-      const groupRate = groupNames.length > 0 ? passedGroups / groupNames.length : null
-
-      const verdict = total === 0 ? '无数据' : rate >= threshold ? '达标' : '不达标'
+      const c = computeConsistency(p, threshold)
+      const rawTotal = (p.consistency || []).length
+      const failedGroups = c.groupNames.filter((g) => c.items.filter((r) => r.view_group === g).some((r) => r.verdict !== 'pass'))
       return {
         project_id: p.projectId,
         stage: p.stage,
-        total_items: total,
-        passed_items: passed,
-        feature_consistency_rate: Number(rate.toFixed(4)),
-        group_pass_rate: groupRate === null ? null : Number(groupRate.toFixed(4)),
-        groups: groupNames.length > 0 ? { total: groupNames.length, passed: passedGroups } : null,
+        raw_total: rawTotal,
+        total_items: c.total,
+        passed_items: c.passed,
+        deduped: rawTotal !== c.total,
+        feature_consistency_rate: Number(c.rate.toFixed(4)),
+        group_pass_rate: c.groupRate === null ? null : Number(c.groupRate.toFixed(4)),
+        groups: c.groupNames.length > 0 ? { total: c.groupNames.length, passed: c.passedGroups, failed: failedGroups } : null,
         threshold,
-        verdict,
-        breakdown,
-        note: total === 0
+        verdict: c.verdict,
+        breakdown: c.breakdown,
+        note: c.total === 0
           ? '尚无一致性校验记录，请先在 S7 用 industrial_record_consistency 逐项记录（可带 view_group）。'
-          : verdict === '达标'
-            ? `特征级一致率 ${(rate * 100).toFixed(1)}% ≥ 阈值 ${(threshold * 100).toFixed(0)}%，S7 一致性校验通过。`
-            : `特征级一致率 ${(rate * 100).toFixed(1)}% < 阈值 ${(threshold * 100).toFixed(0)}%，需回流修正视图后重测（对照变量锁定矩阵 §3 的 S7 视图重出）。`
+          : c.verdict === '达标'
+            ? `特征级一致率 ${(c.rate * 100).toFixed(1)}% ≥ 阈值 ${(threshold * 100).toFixed(0)}% 且组级通过率达标，S7 一致性校验通过。`
+            : !c.featureOk
+              ? `特征级一致率 ${(c.rate * 100).toFixed(1)}% < 阈值 ${(threshold * 100).toFixed(0)}%，不达标。`
+              : `组级通过率 ${(c.groupRate * 100).toFixed(1)}% < 阈值 ${(threshold * 100).toFixed(0)}%（失败视图组：${failedGroups.join(' / ') || '无分组'}），关键项失败不能被普通项抵消，不达标。`
       }
     }
   }
@@ -804,8 +904,9 @@ function makeGetState(ctx, getCfg) {
         confirmations: p.confirmations || {},
         pending_confirmation: (() => {
           const gate = CONFIRM_GATES[p.stage]
-          if (gate && !(p.confirmations && p.confirmations[gate.key])) {
-            return { stage: p.stage, key: gate.key, label: gate.label, question: gate.question }
+          if (gate && !(p.confirmations && p.confirmations[gate.key] && p.confirmations[gate.key].decision === 'confirm')) {
+            const prev = p.confirmations && p.confirmations[gate.key]
+            return { stage: p.stage, key: gate.key, label: gate.label, question: gate.question, current_decision: prev ? prev.decision : null }
           }
           return null
         })()
@@ -857,7 +958,7 @@ export function apply(ctx, config = {}) {
   ctx.effect(() => {
     const disposers = [
       ctx.tools.register(makeProjectInit(getCfg)),
-      ctx.tools.register(advanceStage),
+      ctx.tools.register(makeAdvanceStage(getCfg)),
       ctx.tools.register(lockVariables),
       ctx.tools.register(recordGeneration),
       ctx.tools.register(recordConsistency),
@@ -865,7 +966,7 @@ export function apply(ctx, config = {}) {
       ctx.tools.register(recordDna),
       ctx.tools.register(recordCmf),
       ctx.tools.register(recordGeometry),
-      ctx.tools.register(recordConfirm),
+      ctx.tools.register(makeRecordConfirm(getCfg)),
       ctx.tools.register(makeComputeConsistency(getCfg)),
       ctx.tools.register(makeGetState(ctx, getCfg))
     ]
